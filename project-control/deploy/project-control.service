@@ -1,0 +1,26 @@
+[Unit]
+Description=F2RE Project Control web service
+After=network.target project-control-executor.service
+Requires=project-control-executor.service
+
+[Service]
+Type=simple
+User=project-control
+Group=project-control
+EnvironmentFile=/etc/project-control/project-control.env
+WorkingDirectory=/opt/project-control/current
+ExecStart=/opt/project-control/current/runtime/node/bin/node /opt/project-control/current/src/server.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/project-control/incoming
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=F2RE Project Control privileged executor
+After=local-fs.target
+Before=project-control.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/project-control/project-control.env
+WorkingDirectory=/opt/project-control/current
+ExecStart=/opt/project-control/current/runtime/node/bin/node /opt/project-control/current/src/executor.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0027
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
