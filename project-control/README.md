@@ -4,6 +4,8 @@
 
 Основной сценарий: открыть одну локальную страницу, увидеть фактически активные версии и состояние systemd/health-check, выбрать проект и перетащить подготовленный `*.f2re.zip`. Контроллер проверяет identity package, SHA-256, соответствие allowlisted adapter, распаковывает native bundle в изолированный staging и вызывает штатный installer конкретного проекта. Миграции, backup и rollback не дублируются: за них отвечает существующая транзакция проекта.
 
+Уже существующие установки подключаются без переустановки. Версия читается из штатного `/opt/<service>/current/VERSION`; до первой операции через Project Control время последнего обновления определяется по времени атомарного переключения `current`, затем используется собственная история контроллера.
+
 ## Граница привилегий
 
 `project-control.service` работает от непривилегированного пользователя `project-control`. Root-операции вынесены в `project-control-executor.service` и доступны только через локальный Unix socket. Bundle никогда не передаёт контроллеру произвольную команду: для каждого `projectId` команда установки и список systemd-служб зашиты в статический allowlist `src/adapters.mjs`.
@@ -41,5 +43,7 @@ cat /root/project-control-access.txt
 ## Project packages
 
 Каждый управляемый проект продолжает выпускать свой native offline archive. Дополнительно build pipeline создаёт ZIP-обёртку `*-project-control.f2re.zip`, в которой identity manifest связывает `projectId`, версию и SHA-256 native payload. Именно этот ZIP перетаскивается в UI.
+
+Для размещения всех приложений на одном хосте заранее разведите API/LLM-порты. Рекомендуемый профиль и причины сохранения native defaults описаны в `docs/STANDARD.md`.
 
 Подробности: `docs/STANDARD.md`.
