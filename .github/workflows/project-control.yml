@@ -61,4 +61,5 @@ jobs:
           cd "$DIST"
           sha256sum -c --strict project-control-*.tar.gz.sha256
           test -x install-project-control.sh
-          tar -tzf project-control-*.tar.gz | grep -q '/manifest.sha256$'
+          tar -tzf project-control-*.tar.gz > bundle-files.txt
+          grep -q '/manifest.sha256$' bundle-files.txt
