@@ -1,0 +1,64 @@
+name: Project Control CI
+
+on:
+  pull_request:
+    paths:
+      - "project-control/**"
+      - ".github/workflows/project-control.yml"
+  push:
+    branches: [main]
+    paths:
+      - "project-control/**"
+      - ".github/workflows/project-control.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Contract, security and offline bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: project-control
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Node and Python tests
+        run: npm run check
+
+      - name: Python syntax
+        run: |
+          python3 -m py_compile src/package_tool.py scripts/package-release.py
+
+      - name: Shell syntax
+        run: |
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find deploy scripts -type f -name '*.sh' -print0)
+
+      - name: Build offline controller bundle
+        run: |
+          set -Eeuo pipefail
+          NODE_BIN="$(readlink -f "$(command -v node)")"
+          NODE_HOME="$(cd "$(dirname "$NODE_BIN")/.." && pwd -P)"
+          test -f "$NODE_HOME/LICENSE"
+          RUNTIME="$RUNNER_TEMP/project-control-node"
+          DIST="$RUNNER_TEMP/project-control-dist"
+          mkdir -p "$RUNTIME/bin" "$DIST"
+          cp "$NODE_BIN" "$RUNTIME/bin/node"
+          cp "$NODE_HOME/LICENSE" "$RUNTIME/LICENSE"
+          OUT_DIR="$DIST" NODE_RUNTIME_DIR="$RUNTIME" ./scripts/build-offline-bundle.sh
+          cd "$DIST"
+          sha256sum -c --strict project-control-*.tar.gz.sha256
+          test -x install-project-control.sh
+          tar -tzf project-control-*.tar.gz | grep -q '/manifest.sha256$'
