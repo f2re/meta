@@ -63,3 +63,11 @@ jobs:
           test -x install-project-control.sh
           tar -tzf project-control-*.tar.gz > bundle-files.txt
           grep -q '/manifest.sha256$' bundle-files.txt
+
+      - name: Upload offline controller bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-control-offline-linux-x64
+          path: ${{ runner.temp }}/project-control-dist/*
+          if-no-files-found: error
+          retention-days: 14
