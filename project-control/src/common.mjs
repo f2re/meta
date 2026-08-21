@@ -3,6 +3,8 @@ import { createReadStream, promises as fs } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
+import { ADAPTERS } from "./adapters.mjs";
+
 export const DATA_ROOT = process.env.PROJECT_CONTROL_DATA_DIR || "/var/lib/project-control";
 export const INCOMING_DIR = path.join(DATA_ROOT, "incoming");
 export const STAGING_DIR = path.join(DATA_ROOT, "staging");
@@ -77,14 +79,50 @@ export async function httpHealth(port, requestPath, timeoutMs = 4000) {
   });
 }
 
+async function detectedInstallationRecords(history) {
+  const projectsWithSuccessfulHistory = new Set(
+    history.filter((entry) => entry?.status === "success" && typeof entry.projectId === "string")
+      .map((entry) => entry.projectId)
+  );
+  const detected = [];
+  for (const adapter of Object.values(ADAPTERS)) {
+    if (projectsWithSuccessfulHistory.has(adapter.id)) continue;
+    try {
+      const currentStat = await fs.lstat(adapter.currentPath);
+      const release = await fs.realpath(adapter.currentPath);
+      const version = (await fs.readFile(path.join(release, adapter.versionFile), "utf8")).trim();
+      if (!version) continue;
+      const observedAt = currentStat.mtime.toISOString();
+      detected.push({
+        operationId: `detected-${adapter.id}-${Math.trunc(currentStat.mtimeMs)}`,
+        projectId: adapter.id,
+        displayName: adapter.displayName,
+        status: "success",
+        action: "install",
+        fromVersion: null,
+        toVersion: version,
+        startedAt: observedAt,
+        finishedAt: observedAt,
+        detected: true
+      });
+    } catch {
+      // Detection is best-effort. Normal project status reports real read/health errors.
+    }
+  }
+  return [...history, ...detected].sort((left, right) =>
+    String(right?.finishedAt || "").localeCompare(String(left?.finishedAt || ""))
+  );
+}
+
 export async function readHistory() {
+  let history = [];
   try {
     const parsed = JSON.parse(await fs.readFile(HISTORY_FILE, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
+    history = Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
+    if (error?.code !== "ENOENT") throw error;
   }
+  return await detectedInstallationRecords(history);
 }
 
 export async function appendHistory(entry) {
