@@ -135,12 +135,17 @@ def inspect_project(path: Path, project: dict):
         "controllerApi": 1,
         "projectId": project["projectId"],
         "adapter": project["adapter"],
-        "nativeBundleFormat": project["nativeBundleFormat"],
         "sourceCommit": project["verifiedCommit"],
     }
     for key, value in expected.items():
         if manifest.get(key) != value:
             raise SystemExit(f"{path.name}: {key}={manifest.get(key)!r}, ожидалось {value!r}")
+    allowed_formats = project.get("nativeBundleFormats") or [project["nativeBundleFormat"]]
+    actual_format = manifest.get("nativeBundleFormat")
+    if actual_format not in allowed_formats:
+        raise SystemExit(
+            f"{path.name}: nativeBundleFormat={actual_format!r}, разрешены {allowed_formats!r}"
+        )
     declared = manifest["payload"]
     if declared.get("sha256") != payload_digest.hexdigest() or declared.get("size") != payload_size:
         raise SystemExit(f"{path.name}: payload checksum/size не совпадает")
@@ -153,7 +158,7 @@ def inspect_project(path: Path, project: dict):
         "version": manifest.get("version"),
         "sourceCommit": manifest.get("sourceCommit"),
         "adapter": manifest.get("adapter"),
-        "nativeBundleFormat": manifest.get("nativeBundleFormat"),
+        "nativeBundleFormat": actual_format,
     }
 
 

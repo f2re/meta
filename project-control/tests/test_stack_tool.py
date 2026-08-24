@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from typing import Optional
 import unittest
 import zipfile
 
@@ -43,7 +44,7 @@ class StackToolTests(unittest.TestCase):
         sidecar(archive)
         return archive
 
-    def create_project(self, root: Path, project: dict) -> Path:
+    def create_project(self, root: Path, project: dict, native_format: Optional[str] = None) -> Path:
         payload = f"payload-{project['projectId']}".encode()
         package = root / project["release"]["artifactPattern"].replace("*", "ci")
         manifest = {
@@ -54,7 +55,7 @@ class StackToolTests(unittest.TestCase):
             "adapter": project["adapter"],
             "version": "9.9.9-ci",
             "sourceCommit": project["verifiedCommit"],
-            "nativeBundleFormat": project["nativeBundleFormat"],
+            "nativeBundleFormat": native_format or project["nativeBundleFormat"],
             "signing": None,
             "payload": {"path": "payload/native.tar.gz", "sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)},
         }
@@ -112,6 +113,36 @@ class StackToolTests(unittest.TestCase):
 
     def test_astra_18_stack(self):
         self.exercise_target("1.8")
+
+    def test_kafedra_runtime_only_format_is_allowed(self):
+        managed = json.loads(MANAGED.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as temp:
+            inputs = Path(temp) / "inputs"
+            inputs.mkdir()
+            self.create_meta(inputs, managed, "1.7")
+            for project in managed["projects"]:
+                native_format = "kafedra-runtime-offline-v1" if project["projectId"] == "kafedra-planner" else None
+                self.create_project(inputs, project, native_format)
+            subprocess.run([
+                sys.executable, TOOL, "verify-inputs", inputs, MANAGED,
+                "--meta-commit", META_COMMIT, "--astra-version", "1.7",
+            ], check=True)
+
+    def test_unknown_native_format_is_rejected(self):
+        managed = json.loads(MANAGED.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as temp:
+            inputs = Path(temp) / "inputs"
+            inputs.mkdir()
+            self.create_meta(inputs, managed, "1.7")
+            for project in managed["projects"]:
+                native_format = "kafedra-unknown-v1" if project["projectId"] == "kafedra-planner" else None
+                self.create_project(inputs, project, native_format)
+            result = subprocess.run([
+                sys.executable, TOOL, "verify-inputs", inputs, MANAGED,
+                "--meta-commit", META_COMMIT, "--astra-version", "1.7",
+            ], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("nativeBundleFormat", result.stderr + result.stdout)
 
     def test_target_mismatch_is_rejected(self):
         managed = json.loads(MANAGED.read_text(encoding="utf-8"))

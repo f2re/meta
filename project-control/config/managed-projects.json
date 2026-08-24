@@ -65,6 +65,7 @@
       "verifiedCommit": "3fd08404ff7544d75e98f7d78a74e6cc651e1b49",
       "adapter": "kafedra-planner-v1",
       "nativeBundleFormat": "kafedra-full-airgap-v2",
+      "nativeBundleFormats": ["kafedra-full-airgap-v2", "kafedra-runtime-offline-v1"],
       "currentPath": "/opt/kafedra-planner/current",
       "versionFile": "VERSION",
       "configFile": "/etc/kafedra-planner/kafedra-planner.env",
