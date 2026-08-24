@@ -4,6 +4,24 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.6] - 2026-08-24
+
+### Fixed
+
+- Исправлена причина сборки устаревших приложений: обычный `f2re-stack.sh prepare` больше не воспринимает `verifiedCommit` из `config/managed-projects.json` как вечную версию проекта. Перед сборкой он разрешает текущий HEAD `defaultBranch` каждого управляемого репозитория и фиксирует полученные SHA в снимке конкретного stack build.
+- Актуальный снимок `managed-projects.resolved.json` теперь используется одновременно для клонирования исходников, проверки wrapper `sourceCommit`, meta-bundle и встроенного Project Control controller bundle. Нельзя собрать приложения из новых SHA, оставив контроллер со старой матрицей.
+- Статическая compatibility matrix обновлена до текущих `main`: `docomator` `3a3898c9...` (0.6.4), `planer-solving` `15e6b943...` (2.27.0), `kafedra-planner` `3fb241dd...` (VERSION пока остаётся 0.1.0-rc.9).
+
+### Added
+
+- `--refs latest|pinned`: `latest` является режимом по умолчанию для обычной one-shot сборки, `pinned` сохраняет строгую воспроизводимость зафиксированной compatibility matrix.
+- Перед тяжёлой сборкой CLI выводит разрешённый commit каждого проекта; после checkout выводит фактические `VERSION` и commit, чтобы оператор сразу видел, что именно собирается.
+- CI строит полный stack с `--refs latest` и проверяет, что `sourceCommit` каждого созданного `.f2re.zip` совпадает со снимком разрешённых main SHA.
+
+### Changed
+
+- Project Control version: `0.5.5` → `0.5.6`.
+
 ## [0.5.5] - 2026-08-24
 
 ### Fixed
@@ -92,7 +110,7 @@
 - Проверяемые release assets для Astra Linux Special Edition 1.7 и 1.8, amd64.
 - Матрица CI с deployment smoke в официальных Astra Linux UBI обеих веток.
 - Стабильные latest-download aliases для Astra 1.7/1.8 и portable controller.
-- `release-manifest.json` и единый `SHA256SUMS` для машинной проверки релиза.
+- `release-manifest.json` и единый `SHA256SUMS` для машинной проверки всего релиза.
 - Параметр `--astra 1.7|1.8` для F2RE Stack и строгая проверка target metadata.
 - Документированный release process, policy совместимости и публичная таблица загрузок.
 
@@ -131,6 +149,8 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.6]: https://github.com/f2re/meta/releases/tag/v0.5.6
+[0.5.5]: https://github.com/f2re/meta/releases/tag/v0.5.5
 [0.5.4]: https://github.com/f2re/meta/releases/tag/v0.5.4
 [0.5.3]: https://github.com/f2re/meta/releases/tag/v0.5.3
 [0.5.2]: https://github.com/f2re/meta/releases/tag/v0.5.2
