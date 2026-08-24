@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from typing import Optional
 import unittest
 import zipfile
 
@@ -43,7 +44,7 @@ class StackToolTests(unittest.TestCase):
         sidecar(archive)
         return archive
 
-    def create_project(self, root: Path, project: dict, native_format: str | None = None) -> Path:
+    def create_project(self, root: Path, project: dict, native_format: Optional[str] = None) -> Path:
         payload = f"payload-{project['projectId']}".encode()
         package = root / project["release"]["artifactPattern"].replace("*", "ci")
         manifest = {
