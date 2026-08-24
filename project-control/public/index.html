@@ -80,10 +80,10 @@
 
   <dialog id="keyDialog" aria-labelledby="keyDialogTitle">
     <form method="dialog" id="keyForm">
-      <h2 id="keyDialogTitle">Ключ доступа</h2>
-      <p>Ключ создаётся при установке Project Control и хранится в <code>/root/project-control-access.txt</code>.</p>
-      <label for="accessKey">Ключ</label>
-      <input id="accessKey" name="accessKey" type="password" autocomplete="current-password" required minlength="24">
+      <h2 id="keyDialogTitle">PIN доступа</h2>
+      <p>Четырёхзначный PIN создаётся при установке Project Control и хранится в <code>/root/project-control-access.txt</code>.</p>
+      <label for="accessKey">PIN</label>
+      <input id="accessKey" name="accessKey" type="password" inputmode="numeric" autocomplete="current-password" required pattern="[0-9]{4}" minlength="4" maxlength="4">
       <p id="keyError" class="error-text" aria-live="polite"></p>
       <div class="dialog-actions">
         <button type="button" id="cancelKeyButton" class="button secondary">Отмена</button>

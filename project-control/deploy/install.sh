@@ -51,12 +51,24 @@ fi
 NEW_CONFIG=false
 if [[ ! -f "$CONFIG_FILE" ]]; then
   install -m 0640 -o root -g project-control "$RELEASE/config/project-control.env.example" "$CONFIG_FILE"
-  TOKEN="$("$NODE" -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
-  sed -i "s|^PROJECT_CONTROL_ACCESS_TOKEN=.*$|PROJECT_CONTROL_ACCESS_TOKEN=$TOKEN|" "$CONFIG_FILE"
-  FIRST_ACCESS=/root/project-control-access.txt
-  printf 'Project Control\nURL: http://<IP-сервера>:9090/\nКлюч доступа: %s\n\nКлюч даёт право устанавливать и перезапускать системные службы. Храните его как root-секрет.\n' "$TOKEN" > "$FIRST_ACCESS"
-  chmod 0600 "$FIRST_ACCESS"
   NEW_CONFIG=true
+fi
+PIN="$(awk -F= '$1=="PROJECT_CONTROL_ACCESS_TOKEN"{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$CONFIG_FILE")"
+# 4 digits are intentionally the local UI PIN.  Rotate legacy long tokens on
+# upgrade so the service and the displayed first-access credential stay in sync.
+if [[ ! "$PIN" =~ ^[0-9]{4}$ ]]; then
+  PIN="$("$NODE" -e 'const c=require("node:crypto"); process.stdout.write(String(c.randomInt(0, 10000)).padStart(4, "0"))')"
+  if grep -q '^PROJECT_CONTROL_ACCESS_TOKEN=' "$CONFIG_FILE"; then
+    sed -i "s|^PROJECT_CONTROL_ACCESS_TOKEN=.*$|PROJECT_CONTROL_ACCESS_TOKEN=$PIN|" "$CONFIG_FILE"
+  else
+    printf 'PROJECT_CONTROL_ACCESS_TOKEN=%s\n' "$PIN" >> "$CONFIG_FILE"
+  fi
+  FIRST_ACCESS=/root/project-control-access.txt
+  printf 'Project Control\nURL: http://<IP-сервера>:9090/\nPIN доступа: %s\n\nPIN даёт право устанавливать и перезапускать системные службы. Храните его как root-секрет.\n' "$PIN" > "$FIRST_ACCESS"
+  chmod 0600 "$FIRST_ACCESS"
+  PIN_ROTATED=true
+else
+  PIN_ROTATED=false
 fi
 if grep -q '^PROJECT_CONTROL_VERSION=' "$CONFIG_FILE"; then
   sed -i "s|^PROJECT_CONTROL_VERSION=.*$|PROJECT_CONTROL_VERSION=$VERSION|" "$CONFIG_FILE"
@@ -96,7 +108,7 @@ for _ in $(seq 1 40); do
     trap - ERR
     echo "Project Control $VERSION установлен и запущен."
     echo "Интерфейс: http://$(hostname -I 2>/dev/null | awk 'NF{print $1; exit}'):$PORT/"
-    [[ "$NEW_CONFIG" == false ]] || echo "Ключ первого доступа: /root/project-control-access.txt"
+    [[ "$NEW_CONFIG" == false && "$PIN_ROTATED" == false ]] || echo "PIN доступа: /root/project-control-access.txt"
     exit 0
   fi
   sleep 1

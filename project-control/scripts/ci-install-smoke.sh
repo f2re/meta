@@ -71,7 +71,7 @@ case "$verb" in
         project-control-executor.service)
           stop_one "$STATE/executor.pid"
           mkdir -p /run/project-control
-          nohup /opt/project-control/current/runtime/node/bin/node \
+          nohup runuser -u root -g project-control -- /opt/project-control/current/runtime/node/bin/node \
             /opt/project-control/current/src/executor.mjs >"$STATE/executor.log" 2>&1 &
           echo $! > "$STATE/executor.pid"
           ;;
@@ -139,7 +139,8 @@ assert payload["asyncJobs"] is True, payload
 PY
 
 TOKEN="$(awk -F= '$1=="PROJECT_CONTROL_ACCESS_TOKEN"{sub(/^[^=]*=/, ""); print; exit}' /etc/project-control/project-control.env)"
-[[ ${#TOKEN} -ge 24 ]]
+[[ "$TOKEN" =~ ^[0-9]{4}$ ]]
+[[ "$(stat -c '%a:%U:%G' /run/project-control/executor.sock)" == "660:root:project-control" ]]
 
 /opt/project-control/current/runtime/node/bin/node - "$TOKEN" <<'NODE'
 const http = require('node:http');

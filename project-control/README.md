@@ -15,7 +15,7 @@ Project Control — локальный сервис единого монито�
 
 Latest release: <https://github.com/f2re/meta/releases/latest>
 
-## Что показывает интерфейс 0.5.4
+## Что показывает интерфейс 0.5.5
 
 UI выполняет фактический runtime discovery:
 

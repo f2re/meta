@@ -52,6 +52,13 @@ test("dialog compatibility layer is loaded before the application module", () =>
   assert.ok(appIndex > polyfillIndex, "dialog compatibility layer must run before app.js");
 });
 
+test("access dialog accepts exactly a four-digit PIN", () => {
+  assert.match(indexSource, /inputmode="numeric"/);
+  assert.match(indexSource, /pattern="\[0-9\]\{4\}"/);
+  assert.match(indexSource, /maxlength="4"/);
+  assert.doesNotMatch(indexSource, /minlength="24"/);
+});
+
 test("fallback supplies showModal/close for browsers without HTMLDialogElement API", () => {
   const harness = createHarness();
   assert.equal(typeof harness.dialog.showModal, "function");

@@ -6,7 +6,10 @@ Before=project-control.service
 [Service]
 Type=simple
 User=root
-Group=root
+# The web service is the sole member of this group.  Creating the socket with
+# this primary group avoids a startup race where it exists briefly as root:root
+# and the web service receives EACCES before executor.mjs can chgrp it.
+Group=project-control
 EnvironmentFile=/etc/project-control/project-control.env
 WorkingDirectory=/opt/project-control/current
 ExecStart=/opt/project-control/current/runtime/node/bin/node /opt/project-control/current/src/executor.mjs
@@ -14,7 +17,9 @@ Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30
 KillSignal=SIGTERM
-UMask=0027
+# Keep the Unix socket group-writable from the instant it is bound.  The
+# directory remains root-owned; executor.mjs tightens the socket to 0660.
+UMask=0007
 PrivateTmp=true
 
 [Install]

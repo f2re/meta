@@ -20,7 +20,7 @@ const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const uploadLocks = new Set();
 let discoveryCache = { at: 0, value: null, promise: null };
 
-if (!ACCESS_TOKEN || ACCESS_TOKEN.length < 24) throw new Error("PROJECT_CONTROL_ACCESS_TOKEN должен быть задан и иметь длину не менее 24 символов.");
+if (!/^[0-9]{4}$/.test(ACCESS_TOKEN)) throw new Error("PROJECT_CONTROL_ACCESS_TOKEN должен быть четырёхзначным PIN-кодом.");
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("Некорректный PROJECT_CONTROL_PORT.");
 if (!Number.isInteger(CHUNK_BYTES) || CHUNK_BYTES < 64 * 1024 || CHUNK_BYTES > 768 * 1024) throw new Error("PROJECT_CONTROL_UPLOAD_CHUNK_BYTES должен быть от 64 до 768 КиБ.");
 

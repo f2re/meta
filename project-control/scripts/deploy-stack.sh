@@ -124,7 +124,7 @@ for line in path.read_text(encoding='utf-8').splitlines():
 else: raise SystemExit('PROJECT_CONTROL_ACCESS_TOKEN не найден')
 PY
 )"
-[[ ${#TOKEN} -ge 24 ]] || { echo "Некорректный access token Project Control" >&2; exit 3; }
+[[ "$TOKEN" =~ ^[0-9]{4}$ ]] || { echo "Некорректный четырёхзначный PIN Project Control" >&2; exit 3; }
 export PROJECT_CONTROL_ACCESS_TOKEN="$TOKEN"
 
 preseed_kafedra_colocation() {
