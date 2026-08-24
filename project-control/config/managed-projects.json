@@ -22,7 +22,7 @@
       "native": {
         "verify": {"script": "verify-bundle.sh", "args": ["."]},
         "update": {"script": "update.sh", "args": ["--bundle-root", "."]},
-        "install": {"script": "install.sh", "args": ["--bundle-root", ".", "--install-os-packages"]}
+        "install": {"script": "install.sh", "args": ["--bundle-root", "."]}
       },
       "release": {
         "artifactPattern": "docomator-*-project-control.f2re.zip",
