@@ -27,6 +27,15 @@ test("prepare builds all components locally by default without Docker", () => {
   assert.doesNotMatch(source, /command -v docker|docker run|node:24-bookworm/);
 });
 
+test("planner local build selects Python 3.11+ independently from generic python3", () => {
+  assert.match(source, /BUILD_PYTHON_RESOLVED=""/);
+  assert.match(source, /ensure_build_python\(\)/);
+  assert.match(source, /F2RE_PYTHON_BIN/);
+  assert.match(source, /\/usr\/bin\/python3 python3\.13 python3\.12 python3\.11 python3/);
+  assert.match(source, /sys\.version_info >= \(3, 11\)/);
+  assert.match(source, /Python build runtime:/);
+});
+
 test("deploy-stack honors a URL path prefix for ping and project status", () => {
   assert.match(deploySource, /prefix=\(url\.path or ''\)\.rstrip\('\/'\)/);
   assert.match(deploySource, /prefix \+ '\/api\/ping'/);
