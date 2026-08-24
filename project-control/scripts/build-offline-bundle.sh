@@ -4,7 +4,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 NODE_RUNTIME_DIR="${NODE_RUNTIME_DIR:-}"
+MANAGED_PROJECTS_FILE="${F2RE_MANAGED_PROJECTS_FILE:-$ROOT/config/managed-projects.json}"
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "Некорректный VERSION" >&2; exit 2; }
+[[ -f "$MANAGED_PROJECTS_FILE" ]] || { echo "Не найден compatibility manifest: $MANAGED_PROJECTS_FILE" >&2; exit 2; }
 for cmd in tar gzip sha256sum find sort xargs; do command -v "$cmd" >/dev/null 2>&1 || { echo "Не найдена команда: $cmd" >&2; exit 2; }; done
 
 if [[ -n "$NODE_RUNTIME_DIR" ]]; then
@@ -38,6 +40,7 @@ BUNDLE_NAME="project-control-${VERSION}-linux-${ARCH}"
 BUNDLE="$WORK/$BUNDLE_NAME"
 mkdir -p "$BUNDLE/runtime/node/bin" "$OUT_DIR"
 cp -a "$ROOT/src" "$ROOT/public" "$ROOT/deploy" "$ROOT/config" "$ROOT/scripts" "$ROOT/docs" "$ROOT/package.json" "$ROOT/VERSION" "$ROOT/README.md" "$BUNDLE/"
+cp "$MANAGED_PROJECTS_FILE" "$BUNDLE/config/managed-projects.json"
 cp "$NODE_SOURCE" "$BUNDLE/runtime/node/bin/node"
 cp "$LICENSE_SOURCE" "$BUNDLE/runtime/node/LICENSE"
 chmod 0755 "$BUNDLE/runtime/node/bin/node" "$BUNDLE/deploy/install.sh" "$BUNDLE/deploy/install-from-archive.sh" "$BUNDLE/src/package_tool.py" "$BUNDLE/scripts/"*.sh "$BUNDLE/scripts/"*.py

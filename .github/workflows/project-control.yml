@@ -75,14 +75,14 @@ jobs:
           ./scripts/f2re-stack.sh prepare --astra 1.8 --help >/dev/null
           ./scripts/deploy-stack.sh --help >/dev/null
 
-      - name: Build complete F2RE Stack locally without Docker
+      - name: Build complete F2RE Stack from latest managed main without Docker
         env:
           F2RE_STACK_WORK_DIR: ${{ runner.temp }}/f2re-stack-local-work
         run: |
           set -Eeuo pipefail
           DIST="$RUNNER_TEMP/f2re-stack-local-dist"
           mkdir -p "$DIST"
-          ./scripts/f2re-stack.sh prepare --astra 1.7 --source build --output "$DIST"
+          ./scripts/f2re-stack.sh prepare --astra 1.7 --source build --refs latest --output "$DIST"
           cd "$DIST"
           mapfile -t stacks < <(find . -maxdepth 1 -type f -name 'f2re-stack-*-astra-1.7-amd64.tar.gz' -print)
           test "${#stacks[@]}" -eq 1
@@ -98,6 +98,22 @@ jobs:
               manifest=json.loads(z.read('f2re-service.json'))
           assert manifest['nativeBundleFormat']=='kafedra-runtime-offline-v1', manifest
           print('local-stack-ok:', manifest['projectId'], manifest['version'], manifest['nativeBundleFormat'])
+          PY
+          python3 - stack-inputs-1.7/managed-projects.resolved.json stack-inputs-1.7 <<'PY'
+          import glob,json,subprocess,sys,zipfile
+          manifest_path,root=sys.argv[1:]
+          managed=json.load(open(manifest_path,encoding='utf-8'))
+          for project in managed['projects']:
+              ref=f"refs/heads/{project['defaultBranch']}"
+              output=subprocess.check_output(['git','ls-remote',project['repository'],ref],text=True).strip().split()
+              assert output and output[0]==project['verifiedCommit'], (project['projectId'],output,project['verifiedCommit'])
+              pattern=project['release']['artifactPattern'].replace('*','*')
+              matches=glob.glob(f"{root}/{pattern}")
+              assert len(matches)==1,(project['projectId'],matches)
+              with zipfile.ZipFile(matches[0]) as z:
+                  package=json.loads(z.read('f2re-service.json'))
+              assert package['sourceCommit']==project['verifiedCommit'],(project['projectId'],package['sourceCommit'],project['verifiedCommit'])
+              print('latest-main-ok:',project['projectId'],'version=',package['version'],'commit=',package['sourceCommit'])
           PY
 
       - name: Prepare portable Node.js runtime

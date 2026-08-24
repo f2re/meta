@@ -5,8 +5,10 @@ VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 NODE_RUNTIME_DIR="${NODE_RUNTIME_DIR:-}"
 TARGET_ASTRA_VERSION="${TARGET_ASTRA_VERSION:-1.8}"
+MANAGED_PROJECTS_FILE="${F2RE_MANAGED_PROJECTS_FILE:-$ROOT/config/managed-projects.json}"
 
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "Некорректный VERSION" >&2; exit 2; }
+[[ -f "$MANAGED_PROJECTS_FILE" ]] || { echo "Не найден compatibility manifest: $MANAGED_PROJECTS_FILE" >&2; exit 2; }
 case "$TARGET_ASTRA_VERSION" in
   1.7|1.7.*|1.8|1.8.*) ;;
   *) echo "Поддерживаются target Astra Linux 1.7.x и 1.8.x" >&2; exit 2 ;;
@@ -21,13 +23,14 @@ else
   VERIFY_NODE="$(command -v node || true)"
 fi
 [[ -n "$VERIFY_NODE" && -x "$VERIFY_NODE" ]] || { echo "Для проверки compatibility manifest нужен Node.js." >&2; exit 2; }
-"$VERIFY_NODE" "$ROOT/scripts/verify-compatibility.mjs"
+F2RE_MANAGED_PROJECTS_FILE="$MANAGED_PROJECTS_FILE" "$VERIFY_NODE" "$ROOT/scripts/verify-compatibility.mjs"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 CONTROLLER_OUT="$WORK/controller"
 mkdir -p "$CONTROLLER_OUT"
-OUT_DIR="$CONTROLLER_OUT" NODE_RUNTIME_DIR="$NODE_RUNTIME_DIR" "$ROOT/scripts/build-offline-bundle.sh"
+OUT_DIR="$CONTROLLER_OUT" NODE_RUNTIME_DIR="$NODE_RUNTIME_DIR" \
+  F2RE_MANAGED_PROJECTS_FILE="$MANAGED_PROJECTS_FILE" "$ROOT/scripts/build-offline-bundle.sh"
 
 mapfile -t controller_archives < <(find "$CONTROLLER_OUT" -maxdepth 1 -type f -name 'project-control-*.tar.gz' -print)
 [[ ${#controller_archives[@]} -eq 1 ]] || { echo "Ожидался ровно один Project Control archive" >&2; exit 3; }
@@ -49,7 +52,7 @@ META_ROOT="$WORK/$META_NAME"
 mkdir -p "$META_ROOT"
 cp "$CONTROLLER_ARCHIVE" "$CONTROLLER_ARCHIVE.sha256" "$META_ROOT/"
 cp "$CONTROLLER_OUT/install-project-control.sh" "$META_ROOT/"
-cp "$ROOT/config/managed-projects.json" "$META_ROOT/managed-projects.json"
+cp "$MANAGED_PROJECTS_FILE" "$META_ROOT/managed-projects.json"
 
 SOURCE_COMMIT="unknown"
 if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
