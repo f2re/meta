@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { ADAPTERS } from "./adapters.mjs";
-import { readEnvValue } from "./common.mjs";
+import { httpHealth, readEnvValue } from "./common.mjs";
 
 const execFileAsync = promisify(execFile);
 const OPT_ROOT = process.env.PROJECT_CONTROL_DISCOVERY_OPT_ROOT || "/opt";
@@ -45,20 +45,13 @@ function cleanVersion(value) {
 }
 
 async function readVersionCandidates(root) {
-  const candidates = [
-    "VERSION",
-    "app/VERSION",
-    "application/VERSION"
-  ];
-  for (const relative of candidates) {
+  for (const relative of ["VERSION", "app/VERSION", "application/VERSION"]) {
     const file = path.join(root, relative);
     try {
       const value = cleanVersion(await fs.readFile(file, "utf8"));
       if (value) return { version: value, versionFile: file };
     } catch (error) {
-      if (error?.code !== "ENOENT" && error?.code !== "EACCES") {
-        return { version: null, versionFile: file, versionError: error.message };
-      }
+      if (error?.code !== "ENOENT" && error?.code !== "EACCES") return { version: null, versionFile: file, versionError: error.message };
     }
   }
   return { version: null, versionFile: null };
@@ -75,35 +68,18 @@ export function projectHintForPath(value) {
 async function inspectOptEntry(name) {
   const root = path.join(OPT_ROOT, name);
   let stat;
-  try {
-    stat = await fs.lstat(root);
-  } catch {
-    return null;
-  }
+  try { stat = await fs.lstat(root); } catch { return null; }
   if (!stat.isDirectory() && !stat.isSymbolicLink()) return null;
-
   let rootTarget = root;
   try { rootTarget = await fs.realpath(root); } catch {}
   const currentPath = path.join(root, "current");
   let currentTarget = null;
   let currentExists = false;
-  try {
-    currentTarget = await fs.realpath(currentPath);
-    currentExists = true;
-  } catch {}
-
+  try { currentTarget = await fs.realpath(currentPath); currentExists = true; } catch {}
   let versionInfo = await readVersionCandidates(currentExists ? currentTarget : rootTarget);
-  if (!versionInfo.version && currentExists && currentTarget !== rootTarget) {
-    versionInfo = await readVersionCandidates(rootTarget);
-  }
-
+  if (!versionInfo.version && currentExists && currentTarget !== rootTarget) versionInfo = await readVersionCandidates(rootTarget);
   return {
-    name,
-    path: root,
-    realPath: rootTarget,
-    currentPath,
-    currentTarget,
-    currentExists,
+    name, path: root, realPath: rootTarget, currentPath, currentTarget, currentExists,
     projectHint: projectHintForPath(`${name} ${rootTarget} ${currentTarget || ""}`),
     ...versionInfo
   };
@@ -112,16 +88,9 @@ async function inspectOptEntry(name) {
 export async function scanOpt() {
   const diagnostics = [];
   let entries;
-  try {
-    entries = await fs.readdir(OPT_ROOT, { withFileTypes: true });
-  } catch (error) {
-    return { entries: [], diagnostics: [`Не удалось прочитать ${OPT_ROOT}: ${error.message}`] };
-  }
-  const names = entries
-    .filter((entry) => !entry.name.startsWith("."))
-    .map((entry) => entry.name)
-    .sort()
-    .slice(0, MAX_OPT_ENTRIES);
+  try { entries = await fs.readdir(OPT_ROOT, { withFileTypes: true }); }
+  catch (error) { return { entries: [], diagnostics: [`Не удалось прочитать ${OPT_ROOT}: ${error.message}`] }; }
+  const names = entries.filter((entry) => !entry.name.startsWith(".")).map((entry) => entry.name).sort().slice(0, MAX_OPT_ENTRIES);
   if (entries.length > MAX_OPT_ENTRIES) diagnostics.push(`${OPT_ROOT}: показаны первые ${MAX_OPT_ENTRIES} записей.`);
   const inspected = [];
   for (const name of names) {
@@ -148,17 +117,13 @@ export function parseSsOutput(text) {
     const fields = line.split(/\s+/);
     if (fields.length < 4) continue;
     const localIndex = fields[0] === "LISTEN" ? 3 : 2;
-    const local = fields[localIndex];
-    const endpoint = parseEndpoint(local);
+    const endpoint = parseEndpoint(fields[localIndex]);
     if (!Number.isInteger(endpoint.port)) continue;
     const processText = fields.slice(localIndex + 2).join(" ");
     const processMatch = processText.match(/\(\("([^"]+)"[^)]*pid=(\d+)/);
     ports.push({
-      protocol: "tcp",
-      address: endpoint.address,
-      port: endpoint.port,
-      process: processMatch?.[1] || null,
-      pid: processMatch ? Number(processMatch[2]) : null,
+      protocol: "tcp", address: endpoint.address, port: endpoint.port,
+      process: processMatch?.[1] || null, pid: processMatch ? Number(processMatch[2]) : null,
       raw: line.slice(0, 600)
     });
   }
@@ -168,9 +133,7 @@ export function parseSsOutput(text) {
 export async function scanListeningPorts() {
   let result = await execOptional("ss", ["-H", "-ltnp"]);
   if (!result.ok) result = await execOptional("ss", ["-H", "-ltn"]);
-  if (!result.ok) {
-    return { ports: [], diagnostics: [`Не удалось выполнить ss: ${result.stderr || "команда недоступна"}`] };
-  }
+  if (!result.ok) return { ports: [], diagnostics: [`Не удалось выполнить ss: ${result.stderr || "команда недоступна"}`] };
   return { ports: parseSsOutput(result.stdout), diagnostics: [] };
 }
 
@@ -178,8 +141,7 @@ function parseSystemctlProperties(text) {
   const result = {};
   for (const line of String(text || "").split(/\r?\n/)) {
     const index = line.indexOf("=");
-    if (index <= 0) continue;
-    result[line.slice(0, index)] = line.slice(index + 1);
+    if (index > 0) result[line.slice(0, index)] = line.slice(index + 1);
   }
   return result;
 }
@@ -207,12 +169,9 @@ async function inspectUnit(name) {
 
 export async function scanSystemd() {
   const names = new Set(["project-control.service", "project-control-executor.service"]);
-  for (const adapter of Object.values(ADAPTERS)) {
-    for (const service of [...adapter.requiredServices, ...adapter.optionalServices]) names.add(service);
-  }
+  for (const adapter of Object.values(ADAPTERS)) for (const service of [...adapter.requiredServices, ...adapter.optionalServices]) names.add(service);
   const units = [];
   for (const name of [...names].sort()) units.push(await inspectUnit(name));
-
   const listed = await execOptional("systemctl", ["list-units", "--type=service", "--all", "--no-legend", "--no-pager"]);
   const extra = [];
   if (listed.ok) {
@@ -238,10 +197,7 @@ function proxyTarget(value) {
   const raw = String(value || "").trim();
   const match = raw.match(/^https?:\/\/([^/:;]+|\[[^\]]+\])(?::(\d+))?([^;]*)$/i);
   if (!match) return { upstreamHost: null, upstreamPort: null };
-  return {
-    upstreamHost: match[1].replace(/^\[|\]$/g, ""),
-    upstreamPort: match[2] ? Number(match[2]) : (raw.startsWith("https://") ? 443 : 80)
-  };
+  return { upstreamHost: match[1].replace(/^\[|\]$/g, ""), upstreamPort: match[2] ? Number(match[2]) : (raw.startsWith("https://") ? 443 : 80) };
 }
 
 export function parseNginxText(text, file = "nginx.conf") {
@@ -268,19 +224,11 @@ export function parseNginxText(text, file = "nginx.conf") {
       limits.push({ file, ...latestLimit });
     }
     const proxy = line.match(/^proxy_pass\s+([^;]+);/);
-    if (proxy) {
-      routes.push({
-        file,
-        line: lineNumber,
-        serverNames: [...serverNames],
-        listens: [...listens],
-        location,
-        proxyPass: proxy[1].trim(),
-        clientMaxBodySize: latestLimit?.value || null,
-        clientMaxBodyBytes: latestLimit?.bytes ?? null,
-        ...proxyTarget(proxy[1])
-      });
-    }
+    if (proxy) routes.push({
+      file, line: lineNumber, serverNames: [...serverNames], listens: [...listens], location,
+      proxyPass: proxy[1].trim(), clientMaxBodySize: latestLimit?.value || null,
+      clientMaxBodyBytes: latestLimit?.bytes ?? null, ...proxyTarget(proxy[1])
+    });
   }
   return { routes, limits };
 }
@@ -299,10 +247,7 @@ async function collectNginxFiles() {
       else if (entry.isFile() || entry.isSymbolicLink()) files.push(target);
     }
   }
-  try {
-    const stat = await fs.stat(NGINX_ROOT);
-    if (!stat.isDirectory()) return [];
-  } catch { return []; }
+  try { if (!(await fs.stat(NGINX_ROOT)).isDirectory()) return []; } catch { return []; }
   await walk(NGINX_ROOT, 0);
   return files;
 }
@@ -320,10 +265,8 @@ export async function scanNginx() {
     try { stat = await fs.stat(file); } catch { continue; }
     if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_NGINX_FILE_BYTES) continue;
     let text;
-    try { text = await fs.readFile(file, "utf8"); } catch (error) {
-      if (error?.code !== "EACCES") diagnostics.push(`${file}: ${error.message}`);
-      continue;
-    }
+    try { text = await fs.readFile(file, "utf8"); }
+    catch (error) { if (error?.code !== "EACCES") diagnostics.push(`${file}: ${error.message}`); continue; }
     totalBytes += Buffer.byteLength(text);
     parsedFiles += 1;
     const parsed = parseNginxText(text, file);
@@ -334,17 +277,12 @@ export async function scanNginx() {
   return { present: files.length > 0, parsedFiles, routes, limits, diagnostics };
 }
 
-function standardRoot(adapter) {
-  return path.dirname(adapter.currentPath);
-}
-
+function standardRoot(adapter) { return path.dirname(adapter.currentPath); }
 function optMatches(adapter, optEntries) {
   const root = standardRoot(adapter);
   const direct = optEntries.find((entry) => entry.path === root || entry.realPath === root);
-  if (direct) return [direct, ...optEntries.filter((entry) => entry !== direct && entry.projectHint === adapter.id)];
-  return optEntries.filter((entry) => entry.projectHint === adapter.id);
+  return direct ? [direct, ...optEntries.filter((entry) => entry !== direct && entry.projectHint === adapter.id)] : optEntries.filter((entry) => entry.projectHint === adapter.id);
 }
-
 function portConflictMap(projects) {
   const map = new Map();
   for (const project of projects) {
@@ -358,44 +296,38 @@ function portConflictMap(projects) {
 
 export async function discoverHost() {
   const startedAt = Date.now();
-  const [opt, sockets, systemd, nginx] = await Promise.all([
-    scanOpt(), scanListeningPorts(), scanSystemd(), scanNginx()
-  ]);
-
+  const [opt, sockets, systemd, nginx] = await Promise.all([scanOpt(), scanListeningPorts(), scanSystemd(), scanNginx()]);
   const projects = [];
   for (const adapter of Object.values(ADAPTERS)) {
     const matches = optMatches(adapter, opt.entries);
     const primary = matches[0] || null;
     const configuredRaw = await readEnvValue(adapter.configFile, adapter.portKey).catch(() => null);
     const configuredPort = /^\d+$/.test(String(configuredRaw || "")) ? Number(configuredRaw) : adapter.defaultPort;
-    const services = systemd.units.filter((unit) => [...adapter.requiredServices, ...adapter.optionalServices].includes(unit.name));
+    const knownServiceNames = [...adapter.requiredServices, ...adapter.optionalServices];
+    const services = systemd.units.filter((unit) => knownServiceNames.includes(unit.name));
     const listeners = sockets.ports.filter((item) => item.port === configuredPort);
     const proxyRoutes = nginx.routes.filter((route) => route.upstreamPort === configuredPort);
-    const standard = primary && (primary.path === standardRoot(adapter) || primary.realPath === standardRoot(adapter));
+    const standard = Boolean(primary && (primary.path === standardRoot(adapter) || primary.realPath === standardRoot(adapter)));
+    const requiredActive = adapter.requiredServices.every((name) => services.some((service) => service.name === name && service.active));
     const detected = Boolean(primary || services.some((service) => service.loaded || service.active) || listeners.length || proxyRoutes.length);
+    const health = detected && (listeners.length || requiredActive) ? await httpHealth(configuredPort, adapter.healthPath) : { ok: false, skipped: true };
+    const runtimeHealthy = Boolean(health.ok && (requiredActive || listeners.length));
     const warnings = [];
     if (primary && !standard) warnings.push(`Обнаружен каталог ${primary.path}, но штатный путь адаптера — ${standardRoot(adapter)}.`);
     if (services.some((service) => service.active) && listeners.length === 0) warnings.push(`Служба активна, но порт ${configuredPort} не найден среди LISTEN.`);
     if (proxyRoutes.length && listeners.length === 0) warnings.push(`nginx проксирует на ${configuredPort}, но этот порт сейчас не слушается.`);
-    if (proxyRoutes.some((route) => route.clientMaxBodyBytes && route.clientMaxBodyBytes < 2 * 1024 * 1024)) {
-      warnings.push("nginx ограничивает размер запроса; UI будет использовать chunked upload по 512 КиБ.");
-    }
+    if (!health.ok && !health.skipped && (listeners.length || requiredActive)) warnings.push(`Health ${adapter.healthPath} на порту ${configuredPort} не прошёл.`);
+    if (proxyRoutes.some((route) => route.clientMaxBodyBytes && route.clientMaxBodyBytes < 2 * 1024 * 1024)) warnings.push("nginx ограничивает размер запроса; UI использует chunked upload по 512 КиБ.");
     projects.push({
-      id: adapter.id,
-      displayName: adapter.displayName,
-      detected,
-      standardInstallation: Boolean(standard),
+      id: adapter.id, displayName: adapter.displayName, detected, runtimeHealthy, health,
+      standardInstallation: standard,
       detectedPath: primary?.path || null,
       detectedRealPath: primary?.realPath || null,
       detectedCurrentTarget: primary?.currentTarget || null,
       detectedVersion: primary?.version || null,
       detectedVersionFile: primary?.versionFile || null,
-      configuredPort,
-      configFile: adapter.configFile,
-      portKey: adapter.portKey,
-      listeners,
-      services,
-      nginxRoutes: proxyRoutes,
+      configuredPort, configFile: adapter.configFile, portKey: adapter.portKey,
+      listeners, services, nginxRoutes: proxyRoutes,
       evidence: {
         opt: matches,
         systemd: services.filter((service) => service.loaded || service.active).map((service) => service.name),
@@ -405,26 +337,18 @@ export async function discoverHost() {
       warnings
     });
   }
-
   const conflicts = portConflictMap(projects);
   for (const project of projects) {
     const users = conflicts.get(project.configuredPort) || [];
     if (users.length > 1) project.warnings.push(`Порт ${project.configuredPort} заявлен несколькими проектами: ${users.join(", ")}.`);
   }
-
   const matchedPaths = new Set(projects.flatMap((project) => (project.evidence.opt || []).map((entry) => entry.path)));
   const unknownOpt = opt.entries.filter((entry) => !matchedPaths.has(entry.path) && (entry.version || entry.currentExists || projectHintForPath(entry.path)));
-  const diagnostics = [...opt.diagnostics, ...sockets.diagnostics, ...systemd.diagnostics, ...nginx.diagnostics];
-
   return {
-    scannedAt: new Date().toISOString(),
-    durationMs: Date.now() - startedAt,
-    roots: { opt: OPT_ROOT, nginx: NGINX_ROOT },
-    projects,
-    listeningPorts: sockets.ports,
-    nginx,
-    systemd: { units: systemd.units },
+    scannedAt: new Date().toISOString(), durationMs: Date.now() - startedAt,
+    roots: { opt: OPT_ROOT, nginx: NGINX_ROOT }, projects,
+    listeningPorts: sockets.ports, nginx, systemd: { units: systemd.units },
     opt: { entries: opt.entries, unknown: unknownOpt },
-    diagnostics
+    diagnostics: [...opt.diagnostics, ...sockets.diagnostics, ...systemd.diagnostics, ...nginx.diagnostics]
   };
 }
