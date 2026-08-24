@@ -69,7 +69,7 @@ Project Control package является штатным update-артефакт�
 | projectId | adapter | nativeBundleFormat | Обязательные native entrypoints |
 |---|---|---|---|
 | `docomator` | `docomator-v1` | `docomator-offline-v2` | `VERSION`, `verify-bundle.sh`, `update.sh`, `install.sh` |
-| `planer-solving` | `planer-solving-v1` | `planner-solving-offline-v3` | `VERSION`, `verify_bundle.sh`, `install_or_update.sh` |
+| `planer-solving` | `planer-solving-v1` | `planner-solving-offline-v3` | `app/VERSION`, `verify_bundle.sh`, `install_or_update.sh` |
 | `kafedra-planner` | `kafedra-planner-v1` | `kafedra-full-airgap-v2` | `install.sh`, `application/VERSION`, `deployment.json` |
 
 ## Подпись
