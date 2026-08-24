@@ -1,8 +1,8 @@
 # F2RE Project Control
 
-Project Control — локальный сервис единого мониторинга, диагностики, перезапуска и офлайн-обновления приложений F2RE на Astra Linux/Debian. Стабильные release targets: **Astra Linux Special Edition 1.7 и 1.8, amd64**.
+Project Control — локальный сервис единого мониторинга, диагностики, перезапуска и офлайн-обновления приложений F2RE на Astra Linux/Debian. Стабильные targets: **Astra Linux Special Edition 1.7 и 1.8, amd64**.
 
-Поддерживаются три явно allowlisted проекта: `docomator`, `planer-solving`, `kafedra-planner`. Их репозитории, проверенные commit SHA, CI artifacts, adapter ID, native formats, штатные пути, службы и health endpoints зафиксированы в `config/managed-projects.json` и проверяются CI против `src/adapters.mjs`.
+Поддерживаются три явно allowlisted проекта: `docomator`, `planer-solving`, `kafedra-planner`. Репозитории, exact commit SHA, CI artifacts, adapter ID, допустимые native formats, штатные пути, службы и health endpoints зафиксированы в `config/managed-projects.json` и проверяются CI.
 
 ## Скачать
 
@@ -15,7 +15,7 @@ Project Control — локальный сервис единого монито�
 
 Latest release: <https://github.com/f2re/meta/releases/latest>
 
-## Что показывает интерфейс 0.5.3
+## Что показывает интерфейс 0.5.4
 
 UI выполняет фактический runtime discovery:
 
@@ -23,19 +23,19 @@ UI выполняет фактический runtime discovery:
 - читает состояние systemd и реальные unit paths/ExecStart;
 - сканирует TCP LISTEN через `ss`;
 - читает `/etc/nginx` и извлекает `server_name`, `location`, `proxy_pass`, `client_max_body_size`;
-- сопоставляет эти признаки с allowlisted проектами;
+- сопоставляет признаки с allowlisted проектами;
 - делает независимый HTTP health-check на фактически настроенном порту;
-- показывает обнаруженный путь, версию, порт, nginx route, службы, источники определения и предупреждения.
+- показывает путь, версию, порт, nginx route, службы, источники определения и предупреждения.
 
-Кнопка **«Пересканировать сервер»** принудительно сбрасывает короткий discovery cache. Если privileged executor неисправен, host discovery и UI остаются доступными и показывают ошибку executor; update/restart при этом недоступны до восстановления executor.
+Кнопка **«Пересканировать сервер»** принудительно сбрасывает discovery cache. Если privileged executor неисправен, discovery и UI остаются доступны, а update/restart блокируются до восстановления executor.
 
-Frontend работает как напрямую на `:9090`, так и за nginx path prefix. HTML/JS/CSS отдаются `no-store`, API base вычисляется от URL реально загруженного `app.js`, а compatibility layer окна ключа также корректно загружается через prefix.
+Frontend работает напрямую на `:9090` и за nginx path prefix. HTML/JS/CSS отдаются `no-store`, API base вычисляется от URL реально загруженного `app.js`, а compatibility layer окна ключа также работает через prefix.
 
-Browser update использует блоки по 512 КиБ и отдельную apply-job: это не зависит от типового nginx `client_max_body_size 1m` и не держит один HTTP request на всё время native installer. Тот же chunked/job-контур используется `deploy-stack.sh`. Подробности: `docs/RUNTIME_DISCOVERY.md`.
+Browser update использует блоки по 512 КиБ и отдельную apply-job. Тот же chunked/job-контур используется `deploy-stack.sh`.
 
 ## Установка стабильного meta-bundle
 
-Для Astra 1.7:
+Astra Linux 1.7:
 
 ```bash
 curl -fLO https://github.com/f2re/meta/releases/latest/download/f2re-meta-astra-1.7-amd64.tar.gz
@@ -47,7 +47,7 @@ cd f2re-meta-*-astra-1.7-amd64
 sudo ./install.sh
 ```
 
-Для Astra 1.8 замените `1.7` на `1.8`.
+Для Astra Linux 1.8 замените `1.7` на `1.8`.
 
 После установки:
 
@@ -56,62 +56,85 @@ curl -fsS http://127.0.0.1:9090/api/ping
 sudo cat /root/project-control-access.txt
 ```
 
-## F2RE Stack
+## F2RE Stack — собрать всё одной командой
 
-На build-машине с интернетом:
+Обычный сценарий теперь полностью локальный: скрипт сам получает exact-SHA исходники всех проектов и собирает их на текущей Linux build-машине.
 
 ```bash
 git clone https://github.com/f2re/meta.git
 cd meta
 git pull --ff-only
-git rev-parse HEAD
-cd project-control
-gh auth login
 
-./scripts/f2re-stack.sh prepare --astra 1.7
+./project-control/scripts/f2re-stack.sh prepare --astra 1.7
 # или
-./scripts/f2re-stack.sh prepare --astra 1.8
+./project-control/scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
-`prepare` намеренно работает с **exact SHA текущего локального checkout**. Если в строке `meta: поиск ... для <SHA>` отображается старый commit, обновите checkout через `git pull --ff-only`; скрипт не переключает исходники на более новый `main` скрытно.
+`prepare` по умолчанию равен `--source build` и последовательно собирает:
 
-В режиме `auto` сначала скачиваются CI artifacts exact-SHA. Если конкретного artifact ещё нет, выполняется локальный fallback build. Системный Node.js для этого не нужен: официальный standalone Node.js скачивается автоматически, проверяется по `SHASUMS256.txt` и затем явно передаётся builder-ам. Для отдельных fallback builder-ов дополнительно могут потребоваться `curl`, `xz`, `python3-venv` и Docker.
+1. Project Control meta-bundle;
+2. `docomator`;
+3. `planer-solving`;
+4. `kafedra-planner`;
+5. единый переносимый F2RE Stack.
 
-`stack_tool.py` проверяет target metadata: bundle 1.8 нельзя использовать как 1.7 простым переименованием. После подготовки stack переносится в закрытый контур и запускается `sudo ./deploy-stack.sh`.
+**Docker не используется и не требуется. `gh` не требуется. Системный Node.js не требуется.** Standalone Node.js 24.19.0 загружается автоматически и проверяется по официальному `SHASUMS256.txt`. Эта версия удовлетворяет pinned `docomator` (`>=24.18.0`) и совпадает с offline runtime Kafedra.
 
-Если Project Control доступен через reverse proxy prefix, `deploy-stack.sh` использует тот же prefix для ping, chunk upload, job polling и проверки итогового состояния:
+Для локальной сборки `planer-solving` нужен `python3-venv`. Для автозагрузки runtime нужны `curl` и `xz`.
+
+Kafedra в локальном режиме собирается штатным `scripts/offline/build-bundle.sh` как runtime-offline package без Docker. Ядро приложения — календарь, задачи, данные, API, worker и миграции — работает из этого комплекта. OCR, Poppler и LibreOffice являются дополнительными возможностями и используются, если уже установлены на целевой Astra. Полный target-specific Kafedra full-airgap пакет с `.deb`-слоем остаётся отдельным вариантом для CI/download.
+
+Если вместо локальной сборки нужно сначала искать exact-SHA GitHub Actions artifacts:
 
 ```bash
-sudo ./deploy-stack.sh --url https://server.example/project-control/
+cd project-control
+gh auth login
+./scripts/f2re-stack.sh prepare --astra 1.7 --source auto
 ```
 
-Если нужно строго только скачать проверенные CI artifacts и не разрешать fallback build:
+Только скачать и не собирать:
 
 ```bash
 ./scripts/f2re-stack.sh prepare --astra 1.7 --source download
 ```
 
+Полное описание: `docs/STACK.md`.
+
+## Развёртывание F2RE Stack
+
+```bash
+sha256sum -c f2re-stack-*.tar.gz.sha256
+tar -xzf f2re-stack-*.tar.gz
+cd f2re-stack-*
+sudo ./deploy-stack.sh
+```
+
+Если Project Control находится за reverse proxy prefix, тот же prefix используется для ping, chunk upload, job polling и итогового status:
+
+```bash
+sudo ./deploy-stack.sh --url https://server.example/project-control/
+```
+
 ## Операторский сценарий через UI
 
-1. Установить Project Control из release meta-bundle либо F2RE Stack.
+1. Установить Project Control из meta-bundle либо F2RE Stack.
 2. Открыть `http://<IP>:9090/` или nginx URL и ввести ключ доступа.
-3. Нажать «Пересканировать сервер» и проверить найденные `/opt`, порты, systemd и nginx routes.
-4. Получить готовый `*-project-control.f2re.zip` нужного приложения.
-5. Перетащить ZIP на карточку проекта.
-6. UI передаст ZIP маленькими блоками, сервер проверит identity/SHA-256/adapter/подпись и запустит штатный allowlisted installer отдельной job.
-7. Операция считается успешной только после совпадения активной версии и успешных systemd/HTTP health-check.
+3. Нажать «Пересканировать сервер».
+4. Перетащить готовый `*-project-control.f2re.zip` на карточку проекта.
+5. UI передаст ZIP чанками, сервер проверит identity/SHA-256/adapter/подпись и запустит allowlisted installer отдельной job.
+6. Операция считается успешной только после совпадения активной версии и systemd/HTTP health-check.
 
-Уже существующие установки обнаруживаются по фактическим признакам даже до первого управляемого обновления. После обновлений Project Control ведёт собственную историю операций.
+Уже существующие установки обнаруживаются по фактическим признакам даже до первого управляемого обновления. Project Control ведёт историю операций.
 
 ## Граница привилегий
 
-`project-control.service` работает от непривилегированного пользователя `project-control`. Root-операции вынесены в `project-control-executor.service` и доступны только через локальный Unix socket. Загруженный bundle не может задавать shell-команду или systemd unit: executable contract находится только в `src/adapters.mjs`.
+`project-control.service` работает от непривилегированного пользователя `project-control`. Root-операции вынесены в `project-control-executor.service` и доступны только через локальный Unix socket. Загруженный bundle не может задавать произвольную shell-команду или systemd unit: executable contract находится в `src/adapters.mjs`.
 
-Ключ веб-доступа является административным секретом и при первой установке сохраняется в `/root/project-control-access.txt`.
+Ключ веб-доступа при первой установке сохраняется в `/root/project-control-access.txt`.
 
 Для обязательной криптографической аутентификации release package установите `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` и доверенные Ed25519 public keys в `/etc/project-control/trusted-keys/<keyId>.pem`.
 
-## Локальная сборка
+## Отдельная локальная сборка контроллера
 
 Portable controller:
 
@@ -119,7 +142,7 @@ Portable controller:
 NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 ./scripts/build-offline-bundle.sh
 ```
 
-Astra 1.7:
+Astra 1.7 meta-bundle:
 
 ```bash
 NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 \
@@ -127,23 +150,14 @@ TARGET_ASTRA_VERSION=1.7 \
   ./scripts/build-meta-bundle.sh
 ```
 
-Astra 1.8:
-
-```bash
-NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 \
-TARGET_ASTRA_VERSION=1.8 \
-  ./scripts/build-meta-bundle.sh
-```
+Для Astra 1.8 замените target на `1.8`.
 
 ## CI и релизы
 
-`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix unit tests, dialog compatibility tests, Python-тесты chunked deployment client, stack pack/dry-run и compatibility checks.
+`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix tests, dialog compatibility tests, Python-тесты chunked deployment client, stack pack/dry-run и compatibility checks.
 
-`Project Control CI` затем независимо собирает и устанавливает release candidate в:
+Дополнительно CI **реально запускает локальную сборку полного F2RE Stack для Astra 1.7 без Docker** и проверяет, что созданы wrapper-пакеты всех трёх проектов, включая `kafedra-runtime-offline-v1`. Затем meta release candidate независимо собирается и устанавливается в официальных Astra Linux 1.7 и 1.8 UBI.
 
-- официальный Astra Linux 1.7 UBI;
-- официальный Astra Linux 1.8 UBI.
-
-Workflow `Release` выпускает `vX.Y.Z` только после успешной сборки/смоука обеих платформ и публикует SHA-256 + machine-readable release manifest. Полный порядок: `../docs/RELEASING.md`.
+Workflow `Release` публикует `vX.Y.Z` только после release checks и создаёт SHA-256 + machine-readable manifest.
 
 Подробности: `docs/RUNTIME_DISCOVERY.md`, `docs/STACK.md`, `docs/ASTRA_LINUX.md`, `docs/COMPATIBILITY.md`, `docs/STANDARD.md`.
