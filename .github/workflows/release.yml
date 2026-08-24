@@ -188,7 +188,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish GitHub Release
+    name: Publish and verify GitHub Release
     needs: [validate, controller, astra]
     runs-on: ubuntu-24.04
     permissions:
@@ -289,17 +289,106 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
-          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -Eeuo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; immutable release is left unchanged."
-            exit 0
-          fi
-          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+          elif git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
             target="$(git rev-list -n 1 "$TAG")"
             test "$target" = "$GITHUB_SHA" || { echo "Existing tag $TAG points to $target, expected $GITHUB_SHA" >&2; exit 3; }
-            gh release create "$TAG" --verify-tag --title "F2RE Meta $TAG" --notes-file RELEASE_NOTES.md release-assets/*
+            gh release create "$TAG" --verify-tag --latest --title "F2RE Meta $TAG" --notes-file RELEASE_NOTES.md release-assets/*
           else
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "F2RE Meta $TAG" --notes-file RELEASE_NOTES.md release-assets/*
+            gh release create "$TAG" --target "$GITHUB_SHA" --latest --title "F2RE Meta $TAG" --notes-file RELEASE_NOTES.md release-assets/*
           fi
+
+      - name: Download and verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf release-verify
+          mkdir release-verify
+          gh release download "$TAG" --dir release-verify
+
+          cat > expected-assets.txt <<EOF
+          SHA256SUMS
+          f2re-meta-${VERSION}-all-astra-amd64.zip
+          f2re-meta-${VERSION}-all-astra-amd64.zip.sha256
+          f2re-meta-${VERSION}-astra-1.7-amd64.tar.gz
+          f2re-meta-${VERSION}-astra-1.7-amd64.tar.gz.sha256
+          f2re-meta-${VERSION}-astra-1.8-amd64.tar.gz
+          f2re-meta-${VERSION}-astra-1.8-amd64.tar.gz.sha256
+          f2re-meta-astra-1.7-amd64.tar.gz
+          f2re-meta-astra-1.7-amd64.tar.gz.sha256
+          f2re-meta-astra-1.8-amd64.tar.gz
+          f2re-meta-astra-1.8-amd64.tar.gz.sha256
+          install-project-control.sh
+          project-control-${VERSION}-linux-x64.tar.gz
+          project-control-${VERSION}-linux-x64.tar.gz.sha256
+          project-control-linux-x64.tar.gz
+          project-control-linux-x64.tar.gz.sha256
+          release-manifest.json
+          EOF
+          LC_ALL=C sort -o expected-assets.txt expected-assets.txt
+          find release-verify -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > actual-assets.txt
+          diff -u expected-assets.txt actual-assets.txt
+
+          (
+            cd release-verify
+            sha256sum -c --strict SHA256SUMS
+            sha256sum -c --strict "f2re-meta-${VERSION}-all-astra-amd64.zip.sha256"
+            sha256sum -c --strict "f2re-meta-astra-1.7-amd64.tar.gz.sha256"
+            sha256sum -c --strict "f2re-meta-astra-1.8-amd64.tar.gz.sha256"
+            sha256sum -c --strict project-control-linux-x64.tar.gz.sha256
+          )
+
+          RELEASE_COMMIT="$(git rev-list -n 1 "$TAG")"
+          python3 - release-verify/release-manifest.json "$VERSION" "$TAG" "$RELEASE_COMMIT" <<'PY'
+          import json, sys
+          from pathlib import Path
+          manifest=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          assert manifest['schema']=='f2re-github-release/v1'
+          assert manifest['version']==sys.argv[2]
+          assert manifest['tag']==sys.argv[3]
+          assert manifest['sourceCommit']==sys.argv[4]
+          targets={(item['version'],item['arch']) for item in manifest['targets']}
+          assert targets=={('1.7','amd64'),('1.8','amd64')}, targets
+          names={item['name'] for item in manifest['assets']}
+          for required in [
+              f"f2re-meta-{sys.argv[2]}-astra-1.7-amd64.tar.gz",
+              f"f2re-meta-{sys.argv[2]}-astra-1.8-amd64.tar.gz",
+              f"project-control-{sys.argv[2]}-linux-x64.tar.gz",
+          ]:
+              assert required in names, required
+          print('release-assets-ok:', manifest['tag'], sorted(targets))
+          PY
+
+  release-status:
+    name: Release asset status
+    needs: [validate, publish]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish release/assets commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$PUBLISH_RESULT" == success ]]; then
+            state=success
+            description='Release assets published and verified'
+          else
+            state=failure
+            description="Release pipeline result: $PUBLISH_RESULT"
+          fi
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" \
+            -f context='release/assets' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions"
