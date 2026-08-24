@@ -19,9 +19,7 @@ const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const uploadLocks = new Set();
 let discoveryCache = { at: 0, value: null, promise: null };
 
-if (!ACCESS_TOKEN || ACCESS_TOKEN.length < 24) {
-  throw new Error("PROJECT_CONTROL_ACCESS_TOKEN должен быть задан и иметь длину не менее 24 символов.");
-}
+if (!ACCESS_TOKEN || ACCESS_TOKEN.length < 24) throw new Error("PROJECT_CONTROL_ACCESS_TOKEN должен быть задан и иметь длину не менее 24 символов.");
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("Некорректный PROJECT_CONTROL_PORT.");
 if (!Number.isInteger(CHUNK_BYTES) || CHUNK_BYTES < 64 * 1024 || CHUNK_BYTES > 768 * 1024) {
   throw new Error("PROJECT_CONTROL_UPLOAD_CHUNK_BYTES должен быть от 64 до 768 КиБ.");
@@ -48,10 +46,7 @@ async function executorRequest(endpoint, body = {}) {
       socketPath: SOCKET_PATH,
       path: endpoint,
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "content-length": payload.length
-      },
+      headers: { "content-type": "application/json", "content-length": payload.length },
       timeout: 0
     }, (response) => {
       const chunks = [];
@@ -62,11 +57,8 @@ async function executorRequest(endpoint, body = {}) {
       });
       response.on("end", () => {
         let parsed;
-        try {
-          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-        } catch {
-          return reject(new Error("Executor вернул некорректный ответ."));
-        }
+        try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); }
+        catch { return reject(new Error("Executor вернул некорректный ответ.")); }
         if ((response.statusCode || 500) >= 400) {
           return reject(Object.assign(new Error(parsed.error || "Ошибка executor."), { statusCode: response.statusCode || 500 }));
         }
@@ -98,11 +90,8 @@ export function normalizeRequestPath(pathname) {
 }
 
 function shouldRedirectToSlash(originalPath, normalizedPath) {
-  return originalPath !== "/"
-    && normalizedPath === originalPath
-    && !originalPath.endsWith("/")
-    && !path.posix.extname(originalPath)
-    && !originalPath.includes("/api/");
+  return originalPath !== "/" && normalizedPath === originalPath && !originalPath.endsWith("/")
+    && !path.posix.extname(originalPath) && !originalPath.includes("/api/");
 }
 
 async function serveStatic(request, response, pathname) {
@@ -111,24 +100,15 @@ async function serveStatic(request, response, pathname) {
   const target = path.resolve(PUBLIC_DIR, relative);
   if (!target.startsWith(`${PUBLIC_DIR}${path.sep}`) && target !== path.join(PUBLIC_DIR, "index.html")) return false;
   let data;
-  try {
-    data = await fs.readFile(target);
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
+  try { data = await fs.readFile(target); }
+  catch (error) { if (error?.code === "ENOENT") return false; throw error; }
   response.writeHead(200, {
-    "content-type": contentType(target),
-    "content-length": data.length,
-    "cache-control": "no-store",
-    "pragma": "no-cache",
-    "x-content-type-options": "nosniff",
-    "x-frame-options": "DENY",
-    "referrer-policy": "same-origin",
+    "content-type": contentType(target), "content-length": data.length,
+    "cache-control": "no-store", pragma: "no-cache",
+    "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "same-origin",
     "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
   });
-  if (request.method === "HEAD") response.end();
-  else response.end(data);
+  if (request.method === "HEAD") response.end(); else response.end(data);
   return true;
 }
 
@@ -167,10 +147,7 @@ async function receiveUpload(request) {
       hash.update(chunk);
       if (!output.write(chunk)) await new Promise((resolve) => output.once("drain", resolve));
     }
-    await new Promise((resolve, reject) => {
-      output.end(resolve);
-      output.once("error", reject);
-    });
+    await new Promise((resolve, reject) => { output.end(resolve); output.once("error", reject); });
     if (size === 0) throw Object.assign(new Error("Пустой файл обновления."), { statusCode: 400 });
     await fs.rename(temporary, finalPath);
     return { path: finalPath, size, sha256: hash.digest("hex") };
@@ -182,37 +159,37 @@ async function receiveUpload(request) {
   }
 }
 
-function uploadId(value) {
+function safeUuid(value, label = "идентификатор") {
   const id = String(value || "");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
-    throw Object.assign(new Error("Некорректный идентификатор загрузки."), { statusCode: 400 });
+    throw Object.assign(new Error(`Некорректный ${label}.`), { statusCode: 400 });
   }
   return id;
 }
 
 function uploadPaths(id) {
-  const safe = uploadId(id);
+  const safe = safeUuid(id, "идентификатор загрузки");
   return {
     meta: path.join(INCOMING_DIR, `${safe}.chunked.json`),
     part: path.join(INCOMING_DIR, `${safe}.chunked.part`),
-    final: path.join(INCOMING_DIR, `${safe}.upload`)
+    final: path.join(INCOMING_DIR, `${safe}.upload`),
+    job: path.join(INCOMING_DIR, `${safe}.job.json`)
   };
 }
 
 async function readUploadMeta(id) {
   const paths = uploadPaths(id);
-  try {
-    return { paths, meta: JSON.parse(await fs.readFile(paths.meta, "utf8")) };
-  } catch (error) {
+  try { return { paths, meta: JSON.parse(await fs.readFile(paths.meta, "utf8")) }; }
+  catch (error) {
     if (error?.code === "ENOENT") throw Object.assign(new Error("Загрузка не найдена или уже завершена."), { statusCode: 404 });
     throw error;
   }
 }
 
-async function writeUploadMeta(paths, meta) {
-  const temporary = `${paths.meta}.tmp.${process.pid}`;
-  await fs.writeFile(temporary, `${JSON.stringify(meta)}\n`, { encoding: "utf8", mode: 0o640 });
-  await fs.rename(temporary, paths.meta);
+async function atomicJson(file, value) {
+  const temporary = `${file}.tmp.${process.pid}.${randomUUID()}`;
+  await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o640 });
+  await fs.rename(temporary, file);
 }
 
 async function startChunkedUpload(projectId, originalName, expectedSize) {
@@ -220,35 +197,22 @@ async function startChunkedUpload(projectId, originalName, expectedSize) {
   const fileName = safeOriginalName(originalName);
   if (!fileName.toLowerCase().endsWith(".zip")) throw Object.assign(new Error("Нужен .f2re.zip / ZIP package."), { statusCode: 400 });
   const size = Number(expectedSize);
-  if (!Number.isInteger(size) || size < 1 || size > MAX_UPLOAD_BYTES) {
-    throw Object.assign(new Error("Некорректный размер файла обновления."), { statusCode: 400 });
-  }
+  if (!Number.isInteger(size) || size < 1 || size > MAX_UPLOAD_BYTES) throw Object.assign(new Error("Некорректный размер файла обновления."), { statusCode: 400 });
   const id = randomUUID();
   const paths = uploadPaths(id);
   await fs.writeFile(paths.part, Buffer.alloc(0), { flag: "wx", mode: 0o640 });
-  const meta = {
-    id,
-    projectId,
-    originalName: fileName,
-    expectedSize: size,
-    received: 0,
-    nextIndex: 0,
-    createdAt: new Date().toISOString()
-  };
-  await writeUploadMeta(paths, meta);
+  await atomicJson(paths.meta, { id, projectId, originalName: fileName, expectedSize: size, received: 0, nextIndex: 0, createdAt: new Date().toISOString() });
   return { uploadId: id, chunkBytes: CHUNK_BYTES, expectedSize: size };
 }
 
 async function receiveChunk(request, id) {
-  const safeId = uploadId(id);
+  const safeId = safeUuid(id, "идентификатор загрузки");
   if (uploadLocks.has(safeId)) throw Object.assign(new Error("Предыдущий блок этой загрузки ещё записывается."), { statusCode: 409 });
   uploadLocks.add(safeId);
   try {
     const { paths, meta } = await readUploadMeta(safeId);
     const index = Number(request.headers["x-chunk-index"]);
-    if (!Number.isInteger(index) || index !== meta.nextIndex) {
-      throw Object.assign(new Error(`Ожидался блок ${meta.nextIndex}, получен ${request.headers["x-chunk-index"] ?? "?"}.`), { statusCode: 409 });
-    }
+    if (!Number.isInteger(index) || index !== meta.nextIndex) throw Object.assign(new Error(`Ожидался блок ${meta.nextIndex}.`), { statusCode: 409 });
     const declared = Number(request.headers["content-length"] || 0);
     if (declared && declared > CHUNK_BYTES) throw Object.assign(new Error(`Блок превышает ${CHUNK_BYTES} байт.`), { statusCode: 413 });
     const before = meta.received;
@@ -257,15 +221,10 @@ async function receiveChunk(request, id) {
     try {
       for await (const chunk of request) {
         size += chunk.length;
-        if (size > CHUNK_BYTES || before + size > meta.expectedSize) {
-          throw Object.assign(new Error("Блок загрузки превышает допустимый размер."), { statusCode: 413 });
-        }
+        if (size > CHUNK_BYTES || before + size > meta.expectedSize) throw Object.assign(new Error("Блок загрузки превышает допустимый размер."), { statusCode: 413 });
         if (!output.write(chunk)) await new Promise((resolve) => output.once("drain", resolve));
       }
-      await new Promise((resolve, reject) => {
-        output.end(resolve);
-        output.once("error", reject);
-      });
+      await new Promise((resolve, reject) => { output.end(resolve); output.once("error", reject); });
       if (size < 1) throw Object.assign(new Error("Получен пустой блок."), { statusCode: 400 });
     } catch (error) {
       output.destroy();
@@ -275,55 +234,62 @@ async function receiveChunk(request, id) {
     meta.received = before + size;
     meta.nextIndex += 1;
     meta.updatedAt = new Date().toISOString();
-    await writeUploadMeta(paths, meta);
-    return {
-      uploadId: safeId,
-      received: meta.received,
-      expectedSize: meta.expectedSize,
-      nextIndex: meta.nextIndex,
-      complete: meta.received === meta.expectedSize
-    };
-  } finally {
-    uploadLocks.delete(safeId);
-  }
+    await atomicJson(paths.meta, meta);
+    return { uploadId: safeId, received: meta.received, expectedSize: meta.expectedSize, nextIndex: meta.nextIndex, complete: meta.received === meta.expectedSize };
+  } finally { uploadLocks.delete(safeId); }
 }
 
 async function abortChunkedUpload(id) {
   const { paths } = await readUploadMeta(id);
-  await Promise.all([
-    fs.rm(paths.meta, { force: true }),
-    fs.rm(paths.part, { force: true }),
-    fs.rm(paths.final, { force: true })
-  ]);
+  await Promise.all([fs.rm(paths.meta, { force: true }), fs.rm(paths.part, { force: true }), fs.rm(paths.final, { force: true })]);
   return { ok: true };
 }
 
+async function runApplyJob(paths, meta, digest) {
+  let job = {
+    jobId: meta.id, projectId: meta.projectId, originalName: meta.originalName,
+    status: "running", startedAt: new Date().toISOString(), received: meta.expectedSize
+  };
+  await atomicJson(paths.job, job);
+  try {
+    const result = await executorRequest("/apply", {
+      projectId: meta.projectId, uploadPath: paths.final, originalName: meta.originalName,
+      uploadSha256: digest, uploadSize: meta.expectedSize
+    });
+    job = { ...job, status: "success", finishedAt: new Date().toISOString(), result };
+    discoveryCache.at = 0;
+  } catch (error) {
+    job = { ...job, status: "failed", finishedAt: new Date().toISOString(), error: error.message || String(error) };
+  } finally {
+    await atomicJson(paths.job, job).catch(() => {});
+    await fs.rm(paths.final, { force: true }).catch(() => {});
+    await fs.rm(paths.meta, { force: true }).catch(() => {});
+  }
+}
+
 async function completeChunkedUpload(id) {
-  const safeId = uploadId(id);
+  const safeId = safeUuid(id, "идентификатор загрузки");
   if (uploadLocks.has(safeId)) throw Object.assign(new Error("Последний блок ещё записывается."), { statusCode: 409 });
   uploadLocks.add(safeId);
   try {
     const { paths, meta } = await readUploadMeta(safeId);
     const stat = await fs.stat(paths.part);
-    if (meta.received !== meta.expectedSize || stat.size !== meta.expectedSize) {
-      throw Object.assign(new Error(`Загрузка неполная: ${meta.received}/${meta.expectedSize} байт.`), { statusCode: 409 });
-    }
+    if (meta.received !== meta.expectedSize || stat.size !== meta.expectedSize) throw Object.assign(new Error(`Загрузка неполная: ${meta.received}/${meta.expectedSize} байт.`), { statusCode: 409 });
     await fs.rename(paths.part, paths.final);
     const digest = await sha256File(paths.final);
-    try {
-      return await executorRequest("/apply", {
-        projectId: meta.projectId,
-        uploadPath: paths.final,
-        originalName: meta.originalName,
-        uploadSha256: digest,
-        uploadSize: meta.expectedSize
-      });
-    } finally {
-      await fs.rm(paths.final, { force: true }).catch(() => {});
-      await fs.rm(paths.meta, { force: true }).catch(() => {});
-    }
-  } finally {
-    uploadLocks.delete(safeId);
+    const initial = { jobId: safeId, projectId: meta.projectId, status: "queued", queuedAt: new Date().toISOString() };
+    await atomicJson(paths.job, initial);
+    void runApplyJob(paths, meta, digest);
+    return initial;
+  } finally { uploadLocks.delete(safeId); }
+}
+
+async function readJob(id) {
+  const paths = uploadPaths(id);
+  try { return JSON.parse(await fs.readFile(paths.job, "utf8")); }
+  catch (error) {
+    if (error?.code === "ENOENT") throw Object.assign(new Error("Операция обновления не найдена."), { statusCode: 404 });
+    throw error;
   }
 }
 
@@ -332,12 +298,9 @@ async function cleanupStaleUploads() {
   try { entries = await fs.readdir(INCOMING_DIR); } catch { return; }
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   for (const name of entries) {
-    if (!/^[0-9a-f-]+\.(?:chunked\.(?:json|part)|upload|part)$/i.test(name)) continue;
+    if (!/^[0-9a-f-]+\.(?:chunked\.(?:json|part)|job\.json|upload|part)$/i.test(name)) continue;
     const target = path.join(INCOMING_DIR, name);
-    try {
-      const stat = await fs.stat(target);
-      if (stat.mtimeMs < cutoff) await fs.rm(target, { force: true });
-    } catch {}
+    try { const stat = await fs.stat(target); if (stat.mtimeMs < cutoff) await fs.rm(target, { force: true }); } catch {}
   }
 }
 
@@ -345,15 +308,10 @@ async function getDiscovery(force = false) {
   const now = Date.now();
   if (!force && discoveryCache.value && now - discoveryCache.at < DISCOVERY_CACHE_MS) return discoveryCache.value;
   if (!force && discoveryCache.promise) return await discoveryCache.promise;
-  const promise = discoverHost()
-    .then((value) => {
-      discoveryCache = { at: Date.now(), value, promise: null };
-      return value;
-    })
-    .catch((error) => {
-      discoveryCache.promise = null;
-      throw error;
-    });
+  const promise = discoverHost().then((value) => {
+    discoveryCache = { at: Date.now(), value, promise: null };
+    return value;
+  }).catch((error) => { discoveryCache.promise = null; throw error; });
   discoveryCache.promise = promise;
   return await promise;
 }
@@ -362,34 +320,20 @@ function mergeStatusWithDiscovery(status, discovery) {
   const byId = new Map(discovery.projects.map((project) => [project.id, project]));
   const projects = (status.projects || []).map((project) => {
     const found = byId.get(project.id) || null;
-    return {
-      ...project,
-      observedVersion: project.version || found?.detectedVersion || null,
-      detected: found?.detected || project.installed,
-      discovery: found
-    };
+    return { ...project, observedVersion: project.version || found?.detectedVersion || null, detected: found?.detected || project.installed, discovery: found };
   });
   return {
-    ...status,
-    projects,
+    ...status, projects,
     discovery: {
-      scannedAt: discovery.scannedAt,
-      durationMs: discovery.durationMs,
-      diagnostics: discovery.diagnostics,
-      listeningPorts: discovery.listeningPorts,
-      nginx: discovery.nginx,
-      opt: discovery.opt,
-      systemd: discovery.systemd,
-      upload: { mode: "chunked", chunkBytes: CHUNK_BYTES, maxBytes: MAX_UPLOAD_BYTES }
+      scannedAt: discovery.scannedAt, durationMs: discovery.durationMs, diagnostics: discovery.diagnostics,
+      listeningPorts: discovery.listeningPorts, nginx: discovery.nginx, opt: discovery.opt, systemd: discovery.systemd,
+      upload: { mode: "chunked-job", chunkBytes: CHUNK_BYTES, maxBytes: MAX_UPLOAD_BYTES }
     }
   };
 }
 
 async function projectsStatus(forceDiscovery = false) {
-  const [status, discovery] = await Promise.all([
-    executorRequest("/status"),
-    getDiscovery(forceDiscovery)
-  ]);
+  const [status, discovery] = await Promise.all([executorRequest("/status"), getDiscovery(forceDiscovery)]);
   return mergeStatusWithDiscovery(status, discovery);
 }
 
@@ -399,12 +343,9 @@ async function route(request, response) {
   const routePath = normalizeRequestPath(originalPath);
   try {
     if ((request.method === "GET" || request.method === "HEAD") && shouldRedirectToSlash(originalPath, routePath)) {
-      response.writeHead(308, { location: `${originalPath}/${url.search}`.replace(/\/$/, "/") });
-      return response.end();
+      response.writeHead(308, { location: `${originalPath}/${url.search}` }); return response.end();
     }
-    if (request.method === "GET" && routePath === "/api/ping") {
-      return jsonResponse(response, 200, { ok: true, version: VERSION, discovery: true, chunkedUpload: true });
-    }
+    if (request.method === "GET" && routePath === "/api/ping") return jsonResponse(response, 200, { ok: true, version: VERSION, discovery: true, chunkedUpload: true, asyncJobs: true });
     if (request.method === "GET" && routePath === "/api/projects") {
       if (!requireAuth(request, response)) return;
       return jsonResponse(response, 200, await projectsStatus(url.searchParams.get("rescan") === "1"));
@@ -413,38 +354,28 @@ async function route(request, response) {
       if (!requireAuth(request, response)) return;
       return jsonResponse(response, 200, await getDiscovery(url.searchParams.get("rescan") === "1"));
     }
+    const jobMatch = routePath.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
+    if (request.method === "GET" && jobMatch) {
+      if (!requireAuth(request, response)) return;
+      return jsonResponse(response, 200, await readJob(jobMatch[1]));
+    }
     const restartMatch = routePath.match(/^\/api\/projects\/([a-z0-9-]+)\/restart$/);
     if (request.method === "POST" && restartMatch) {
       if (!requireAuth(request, response)) return;
-      const projectId = restartMatch[1];
-      assertProject(projectId);
-      discoveryCache.at = 0;
-      const result = await executorRequest("/restart", { projectId });
-      return jsonResponse(response, 200, result);
+      assertProject(restartMatch[1]); discoveryCache.at = 0;
+      return jsonResponse(response, 200, await executorRequest("/restart", { projectId: restartMatch[1] }));
     }
     const updateMatch = routePath.match(/^\/api\/projects\/([a-z0-9-]+)\/update$/);
     if (request.method === "POST" && updateMatch) {
       if (!requireAuth(request, response)) return;
-      const projectId = updateMatch[1];
-      assertProject(projectId);
+      const projectId = updateMatch[1]; assertProject(projectId);
       const originalName = safeOriginalName(request.headers["x-file-name"]);
-      if (!originalName.toLowerCase().endsWith(".zip")) {
-        return jsonResponse(response, 400, { error: "Для Project Control требуется .f2re.zip / ZIP package." });
-      }
+      if (!originalName.toLowerCase().endsWith(".zip")) return jsonResponse(response, 400, { error: "Для Project Control требуется .f2re.zip / ZIP package." });
       const upload = await receiveUpload(request);
       try {
-        const result = await executorRequest("/apply", {
-          projectId,
-          uploadPath: upload.path,
-          originalName,
-          uploadSha256: upload.sha256,
-          uploadSize: upload.size
-        });
-        discoveryCache.at = 0;
-        return jsonResponse(response, 200, result);
-      } finally {
-        await fs.rm(upload.path, { force: true }).catch(() => {});
-      }
+        const result = await executorRequest("/apply", { projectId, uploadPath: upload.path, originalName, uploadSha256: upload.sha256, uploadSize: upload.size });
+        discoveryCache.at = 0; return jsonResponse(response, 200, result);
+      } finally { await fs.rm(upload.path, { force: true }).catch(() => {}); }
     }
     if (request.method === "POST" && routePath === "/api/uploads/start") {
       if (!requireAuth(request, response)) return;
@@ -459,9 +390,7 @@ async function route(request, response) {
     const completeMatch = routePath.match(/^\/api\/uploads\/([0-9a-f-]+)\/complete$/i);
     if (request.method === "POST" && completeMatch) {
       if (!requireAuth(request, response)) return;
-      const result = await completeChunkedUpload(completeMatch[1]);
-      discoveryCache.at = 0;
-      return jsonResponse(response, 200, result);
+      return jsonResponse(response, 202, await completeChunkedUpload(completeMatch[1]));
     }
     const abortMatch = routePath.match(/^\/api\/uploads\/([0-9a-f-]+)$/i);
     if (request.method === "DELETE" && abortMatch) {
@@ -489,9 +418,7 @@ const server = http.createServer(route);
 server.requestTimeout = 0;
 server.headersTimeout = 65_000;
 server.keepAliveTimeout = 5_000;
-server.listen(PORT, HOST, () => {
-  console.log(`Project Control ${VERSION}: http://${HOST}:${PORT}`);
-});
+server.listen(PORT, HOST, () => console.log(`Project Control ${VERSION}: http://${HOST}:${PORT}`));
 
 const stop = () => server.close(() => process.exit(0));
 process.on("SIGTERM", stop);
