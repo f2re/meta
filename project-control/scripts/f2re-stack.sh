@@ -5,36 +5,40 @@ MANAGED="$ROOT/config/managed-projects.json"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 COMMAND="${1:-prepare}"
 [[ $# -eq 0 ]] || shift
-SOURCE_MODE=auto
+SOURCE_MODE="${F2RE_STACK_SOURCE_MODE:-build}"
 TARGET_ASTRA_VERSION="${F2RE_TARGET_ASTRA_VERSION:-1.8}"
 OUT_DIR="${F2RE_STACK_OUT_DIR:-$ROOT/dist}"
 INPUT_DIR=""
 WORK_DIR="${F2RE_STACK_WORK_DIR:-}"
 KEEP_WORK=false
-NODE_VERSION="${F2RE_NODE_VERSION:-24.15.0}"
+NODE_VERSION="${F2RE_NODE_VERSION:-24.19.0}"
 NODE_RUNTIME_RESOLVED=""
 
 usage() {
   cat <<'EOF'
-F2RE Stack — сборка/скачивание всех offline bundle одной командой.
+F2RE Stack — локальная сборка всех offline bundle одной командой.
 
-  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--source auto|download|build] [--output DIR]
+  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--source build|auto|download] [--output DIR]
   ./scripts/f2re-stack.sh download [--astra 1.7|1.8] [--output DIR]
   ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--output DIR]
   ./scripts/f2re-stack.sh pack [--astra 1.7|1.8] [--input DIR] [--output DIR]
 
-prepare (по умолчанию): для каждого компонента сначала пытается скачать
-точный проверенный GitHub Actions artifact закреплённого commit; если artifact
-ещё недоступен, пересобирает только этот компонент локально. Затем создаёт один
-f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz для переноса в закрытый контур.
+prepare (по умолчанию) = build: прямо на текущей Linux build-машине клонирует
+закреплённые exact-SHA исходники meta, docomator, planer-solving и kafedra-planner,
+собирает их и формирует один f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz.
+Docker не используется и не требуется.
 
-Системный Node.js не требуется: для локального fallback build официальный
-standalone Node.js автоматически скачивается и проверяется по SHASUMS256.txt.
+--source auto: сначала ищет exact-SHA GitHub Actions artifacts и локально собирает
+только отсутствующие компоненты. --source download запрещает локальную сборку.
+
+Системный Node.js не требуется: официальный standalone Node.js автоматически
+скачивается и проверяется по SHASUMS256.txt.
 
 Переменные:
   F2RE_TARGET_ASTRA_VERSION целевая Astra Linux (1.7 или 1.8; default 1.8)
+  F2RE_STACK_SOURCE_MODE    build (default), auto или download
   NODE_RUNTIME_DIR          готовый автономный Linux Node.js runtime
-  F2RE_NODE_VERSION         версия Node для автозагрузки (24.15.0)
+  F2RE_NODE_VERSION         версия Node для автозагрузки (24.19.0)
   F2RE_RELEASE_SIGNING_KEY  Ed25519 private key для локальной пересборки wrappers
 EOF
 }
@@ -53,7 +57,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$COMMAND" in prepare|download|build|pack) ;; -h|--help) usage; exit 0 ;; *) echo "Неизвестная команда: $COMMAND" >&2; usage >&2; exit 2 ;; esac
-case "$SOURCE_MODE" in auto|download|build) ;; *) echo "--source: auto, download или build" >&2; exit 2 ;; esac
+case "$SOURCE_MODE" in auto|download|build) ;; *) echo "--source: build, auto или download" >&2; exit 2 ;; esac
 case "$TARGET_ASTRA_VERSION" in 1.7|1.8) ;; *) echo "--astra поддерживает только 1.7 или 1.8" >&2; exit 2 ;; esac
 [[ "$COMMAND" != download ]] || SOURCE_MODE=download
 [[ "$COMMAND" != build ]] || SOURCE_MODE=build
@@ -180,27 +184,28 @@ build_planer() {
 }
 
 build_kafedra() {
-  local repo="$1" commit="$2" dest="$3" src="$WORK_DIR/src-kafedra" archive
-  command -v docker >/dev/null 2>&1 || { echo "Для локальной full offline сборки kafedra-planner нужен Docker." >&2; return 2; }
-  echo "==> kafedra-planner: локальная Debian 12 сборка $commit"
+  local repo="$1" commit="$2" dest="$3" runtime="$4" src="$WORK_DIR/src-kafedra" archive package
+  echo "==> kafedra-planner: локальная runtime-offline сборка $commit (без Docker)"
   clone_exact "$repo" "$commit" "$src"
   mkdir -p "$dest"
-  docker run --rm -e GITHUB_SHA="$commit" -v "$src:/src:ro" -v "$dest:/out" node:24-bookworm bash -lc '
-    set -Eeuo pipefail
-    apt-get update >/dev/null
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 ca-certificates curl xz-utils binutils systemd >/dev/null
-    cd /src
-    OUT_DIR=/out KAFEDRA_FULL_BUNDLE_CACHE_DIR=/tmp/kafedra-cache bash scripts/offline/build-full-bundle.sh >/dev/null
-  '
+  (cd "$src" && \
+    PATH="$runtime/bin:$PATH" \
+    GITHUB_SHA="$commit" \
+    OUT_DIR="$dest" \
+    KAFEDRA_RUNTIME_CACHE_DIR="$WORK_DIR/kafedra-runtime-cache" \
+    bash scripts/offline/build-bundle.sh >/dev/null)
   archive="$(find "$dest" -maxdepth 1 -type f -name 'kafedra-planner-*.tar.gz' ! -name '*-llm.tar.gz' -print -quit)"
-  [[ -n "$archive" && -f "$archive" && -f "$archive.sha256" ]] || { echo "Kafedra full bundle не создан" >&2; return 3; }
+  [[ -n "$archive" && -f "$archive" && -f "$archive.sha256" ]] || { echo "Kafedra runtime offline bundle не создан" >&2; return 3; }
   args=(
     --archive "$archive" --output "$dest" --project-id kafedra-planner --display-name "Кафедра Planner"
     --adapter kafedra-planner-v1 --version "$(tr -d '[:space:]' < "$src/VERSION")"
-    --source-commit "$commit" --native-format kafedra-full-airgap-v2
+    --source-commit "$commit" --native-format kafedra-runtime-offline-v1
   )
   [[ -z "${F2RE_RELEASE_SIGNING_KEY:-}" ]] || args+=(--signing-key "$F2RE_RELEASE_SIGNING_KEY")
   python3 "$src/scripts/offline/project-control-package.py" "${args[@]}" >/dev/null
+  package="$(find "$dest" -maxdepth 1 -type f -name 'kafedra-planner-*-project-control.f2re.zip' -print -quit)"
+  [[ -n "$package" && -f "$package" && -f "$package.sha256" ]] || { echo "Kafedra Project Control package не создан" >&2; return 3; }
+  echo "    Kafedra: runtime-only package; ядро работает офлайн, OCR/LibreOffice/Poppler используют уже установленные возможности target ОС." >&2
 }
 
 build_project() {
@@ -208,7 +213,7 @@ build_project() {
   case "$id" in
     docomator) build_docomator "$repo" "$commit" "$dest" "$runtime" ;;
     planer-solving) build_planer "$repo" "$commit" "$dest" ;;
-    kafedra-planner) build_kafedra "$repo" "$commit" "$dest" ;;
+    kafedra-planner) build_kafedra "$repo" "$commit" "$dest" "$runtime" ;;
     *) echo "Неизвестный projectId: $id" >&2; return 2 ;;
   esac
 }
