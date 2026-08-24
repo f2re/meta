@@ -10,7 +10,7 @@
 
 - Исправлена причина сборки устаревших приложений: обычный `f2re-stack.sh prepare` больше не воспринимает `verifiedCommit` из `config/managed-projects.json` как вечную версию проекта. Перед сборкой он разрешает текущий HEAD `defaultBranch` каждого управляемого репозитория и фиксирует полученные SHA в снимке конкретного stack build.
 - Актуальный снимок `managed-projects.resolved.json` теперь используется одновременно для клонирования исходников, проверки wrapper `sourceCommit`, meta-bundle и встроенного Project Control controller bundle. Нельзя собрать приложения из новых SHA, оставив контроллер со старой матрицей.
-- Статическая compatibility matrix обновлена до текущих `main`: `docomator` `3a3898c9...` (0.6.4), `planer-solving` `15e6b943...` (2.27.0), `kafedra-planner` `3fb241dd...` (VERSION пока остаётся 0.1.0-rc.9).
+- Статическая compatibility matrix обновлена до проверенных `main`: `docomator` `c0269c38...` (0.6.5), `planer-solving` `15e6b943...` (2.27.0), `kafedra-planner` `3fb241dd...` (VERSION пока остаётся 0.1.0-rc.9).
 
 ### Added
 
