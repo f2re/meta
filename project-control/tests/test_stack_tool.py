@@ -87,7 +87,10 @@ class StackToolTests(unittest.TestCase):
             extracted = temp_root / "extracted"
             extracted.mkdir()
             with tarfile.open(bundle, "r:gz") as archive:
-                archive.extractall(extracted, filter="data")
+                for member in archive.getmembers():
+                    self.assertFalse(Path(member.name).is_absolute())
+                    self.assertNotIn("..", Path(member.name).parts)
+                archive.extractall(extracted)
             roots = [path for path in extracted.iterdir() if path.is_dir()]
             self.assertEqual(len(roots), 1)
             stack_root = roots[0]
