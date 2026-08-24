@@ -6,6 +6,7 @@ VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 COMMAND="${1:-prepare}"
 [[ $# -eq 0 ]] || shift
 SOURCE_MODE=auto
+TARGET_ASTRA_VERSION="${F2RE_TARGET_ASTRA_VERSION:-1.8}"
 OUT_DIR="${F2RE_STACK_OUT_DIR:-$ROOT/dist}"
 INPUT_DIR=""
 WORK_DIR="${F2RE_STACK_WORK_DIR:-}"
@@ -16,17 +17,18 @@ usage() {
   cat <<'EOF'
 F2RE Stack — сборка/скачивание всех offline bundle одной командой.
 
-  ./scripts/f2re-stack.sh prepare [--source auto|download|build] [--output DIR]
-  ./scripts/f2re-stack.sh download [--output DIR]
-  ./scripts/f2re-stack.sh build [--output DIR]
-  ./scripts/f2re-stack.sh pack [--input DIR] [--output DIR]
+  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--source auto|download|build] [--output DIR]
+  ./scripts/f2re-stack.sh download [--astra 1.7|1.8] [--output DIR]
+  ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--output DIR]
+  ./scripts/f2re-stack.sh pack [--astra 1.7|1.8] [--input DIR] [--output DIR]
 
 prepare (по умолчанию): для каждого компонента сначала пытается скачать
 точный проверенный GitHub Actions artifact закреплённого commit; если artifact
 ещё недоступен, пересобирает только этот компонент локально. Затем создаёт один
-f2re-stack-*-astra-1.8-amd64.tar.gz для переноса в закрытый контур.
+f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz для переноса в закрытый контур.
 
 Переменные:
+  F2RE_TARGET_ASTRA_VERSION целевая Astra Linux (1.7 или 1.8; default 1.8)
   NODE_RUNTIME_DIR          готовый автономный Linux Node.js runtime
   F2RE_NODE_VERSION         версия Node для автозагрузки (24.15.0)
   F2RE_RELEASE_SIGNING_KEY  Ed25519 private key для локальной пересборки wrappers
@@ -35,6 +37,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --astra) [[ $# -ge 2 ]] || { echo "--astra требует 1.7 или 1.8" >&2; exit 2; }; TARGET_ASTRA_VERSION="$2"; shift 2 ;;
     --source) [[ $# -ge 2 ]] || { echo "--source требует значение" >&2; exit 2; }; SOURCE_MODE="$2"; shift 2 ;;
     --output) [[ $# -ge 2 ]] || { echo "--output требует DIR" >&2; exit 2; }; OUT_DIR="$2"; shift 2 ;;
     --input) [[ $# -ge 2 ]] || { echo "--input требует DIR" >&2; exit 2; }; INPUT_DIR="$2"; shift 2 ;;
@@ -47,6 +50,7 @@ done
 
 case "$COMMAND" in prepare|download|build|pack) ;; -h|--help) usage; exit 0 ;; *) echo "Неизвестная команда: $COMMAND" >&2; usage >&2; exit 2 ;; esac
 case "$SOURCE_MODE" in auto|download|build) ;; *) echo "--source: auto, download или build" >&2; exit 2 ;; esac
+case "$TARGET_ASTRA_VERSION" in 1.7|1.8) ;; *) echo "--astra поддерживает только 1.7 или 1.8" >&2; exit 2 ;; esac
 [[ "$COMMAND" != download ]] || SOURCE_MODE=download
 [[ "$COMMAND" != build ]] || SOURCE_MODE=build
 
@@ -54,7 +58,7 @@ for cmd in python3 sha256sum tar gzip find git; do command -v "$cmd" >/dev/null 
 META_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 [[ "$META_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "Не удалось определить commit meta" >&2; exit 2; }
 OUT_DIR="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$OUT_DIR")"
-INPUT_DIR="${INPUT_DIR:-$OUT_DIR/stack-inputs}"
+INPUT_DIR="${INPUT_DIR:-$OUT_DIR/stack-inputs-$TARGET_ASTRA_VERSION}"
 INPUT_DIR="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$INPUT_DIR")"
 mkdir -p "$OUT_DIR"
 
@@ -134,8 +138,8 @@ clone_exact() {
 build_meta() {
   local dest="$1" runtime="$2"
   mkdir -p "$dest"
-  echo "==> meta: локальная сборка Astra meta-bundle"
-  OUT_DIR="$dest" NODE_RUNTIME_DIR="$runtime" TARGET_ASTRA_VERSION=1.8 "$ROOT/scripts/build-meta-bundle.sh" >/dev/null
+  echo "==> meta: локальная сборка Astra $TARGET_ASTRA_VERSION meta-bundle"
+  OUT_DIR="$dest" NODE_RUNTIME_DIR="$runtime" TARGET_ASTRA_VERSION="$TARGET_ASTRA_VERSION" "$ROOT/scripts/build-meta-bundle.sh" >/dev/null
 }
 
 build_docomator() {
@@ -201,9 +205,10 @@ acquire_all() {
 
   local meta_ok=false
   if [[ "$mode" != build ]]; then
-    echo "==> meta: поиск проверенного GitHub Actions artifact $META_COMMIT"
-    if artifact_for_commit "f2re/meta" "f2re-meta-astra-1.8-amd64" "$META_COMMIT" "$INPUT_DIR"; then meta_ok=true; else
-      [[ "$mode" == auto ]] || { echo "Meta artifact для $META_COMMIT не найден." >&2; return 3; }
+    local meta_artifact="f2re-meta-astra-${TARGET_ASTRA_VERSION}-amd64"
+    echo "==> meta: поиск проверенного GitHub Actions artifact $meta_artifact для $META_COMMIT"
+    if artifact_for_commit "f2re/meta" "$meta_artifact" "$META_COMMIT" "$INPUT_DIR"; then meta_ok=true; else
+      [[ "$mode" == auto ]] || { echo "Meta artifact $meta_artifact для $META_COMMIT не найден." >&2; return 3; }
       echo "    artifact не найден — будет локальная сборка"
     fi
   fi
@@ -225,13 +230,15 @@ acquire_all() {
     fi
   done < <(json_projects)
 
-  python3 "$ROOT/scripts/stack_tool.py" verify-inputs "$INPUT_DIR" "$MANAGED" --meta-commit "$META_COMMIT" >/dev/null
+  python3 "$ROOT/scripts/stack_tool.py" verify-inputs "$INPUT_DIR" "$MANAGED" \
+    --meta-commit "$META_COMMIT" --astra-version "$TARGET_ASTRA_VERSION" >/dev/null
   echo "Все входные bundle проверены: $INPUT_DIR"
 }
 
 pack_all() {
   [[ -d "$INPUT_DIR" ]] || { echo "Нет каталога входных bundle: $INPUT_DIR" >&2; exit 3; }
-  python3 "$ROOT/scripts/stack_tool.py" pack "$INPUT_DIR" "$MANAGED" "$OUT_DIR" --version "$VERSION" --meta-commit "$META_COMMIT"
+  python3 "$ROOT/scripts/stack_tool.py" pack "$INPUT_DIR" "$MANAGED" "$OUT_DIR" \
+    --version "$VERSION" --meta-commit "$META_COMMIT" --astra-version "$TARGET_ASTRA_VERSION"
 }
 
 case "$COMMAND" in
@@ -242,10 +249,10 @@ case "$COMMAND" in
     acquire_all "$SOURCE_MODE"
     STACK_ARCHIVE="$(pack_all | tail -n 1)"
     echo
-    echo "Готов единый переносимый F2RE Stack:"
+    echo "Готов единый переносимый F2RE Stack для Astra Linux $TARGET_ASTRA_VERSION:"
     echo "  $STACK_ARCHIVE"
     echo "  $STACK_ARCHIVE.sha256"
     echo
-    echo "На Astra Linux: sha256sum -c $(basename "$STACK_ARCHIVE").sha256 && tar -xzf $(basename "$STACK_ARCHIVE") && cd $(basename "$STACK_ARCHIVE" .tar.gz) && sudo ./deploy-stack.sh"
+    echo "На Astra Linux $TARGET_ASTRA_VERSION: sha256sum -c $(basename "$STACK_ARCHIVE").sha256 && tar -xzf $(basename "$STACK_ARCHIVE") && cd $(basename "$STACK_ARCHIVE" .tar.gz) && sudo ./deploy-stack.sh"
     ;;
 esac

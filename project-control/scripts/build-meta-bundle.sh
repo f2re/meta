@@ -7,7 +7,10 @@ NODE_RUNTIME_DIR="${NODE_RUNTIME_DIR:-}"
 TARGET_ASTRA_VERSION="${TARGET_ASTRA_VERSION:-1.8}"
 
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "Некорректный VERSION" >&2; exit 2; }
-[[ "$TARGET_ASTRA_VERSION" =~ ^1\.8([.][0-9]+)?$ ]] || { echo "Поддерживается target Astra Linux 1.8.x" >&2; exit 2; }
+case "$TARGET_ASTRA_VERSION" in
+  1.7|1.7.*|1.8|1.8.*) ;;
+  *) echo "Поддерживаются target Astra Linux 1.7.x и 1.8.x" >&2; exit 2 ;;
+esac
 for cmd in tar gzip sha256sum find awk sort xargs python3; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Не найдена команда: $cmd" >&2; exit 2; }
 done
@@ -91,7 +94,8 @@ release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 managed = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 assert release["schema"] == "f2re-meta-bundle/v1"
 assert release["target"]["os"] == "astra-linux-special-edition"
-assert str(release["target"]["version"]).startswith("1.8")
+target_version = str(release["target"]["version"])
+assert target_version == "1.7" or target_version.startswith("1.7.") or target_version == "1.8" or target_version.startswith("1.8.")
 assert release["target"]["architecture"] in {"amd64", "arm64"}
 assert managed["schema"] == "f2re-managed-projects/v1"
 projects = managed["projects"]
@@ -100,7 +104,7 @@ assert {p["projectId"] for p in projects} == {"docomator", "planer-solving", "ka
 for project in projects:
     assert re.fullmatch(r"[0-9a-f]{40}", project["verifiedCommit"])
     assert project["repository"].startswith("https://github.com/f2re/")
-print("metadata-ok")
+print("metadata-ok", target_version)
 PY
 ARCHIVE="$(python3 - "$DIR/meta-release.json" <<'PY'
 import json, sys
@@ -146,7 +150,7 @@ Target: Astra Linux Special Edition $TARGET_ASTRA_VERSION ($TARGET_ARCH)
    curl -fsS http://127.0.0.1:9090/api/ping
 
 Управляемые приложения не входят в этот архив. Их готовые *-project-control.f2re.zip
-берутся из CI соответствующих репозиториев, перечисленных в managed-projects.json.
+берутся из релизов/CI соответствующих репозиториев, перечисленных в managed-projects.json.
 EOF_README
 
 chmod 0755 "$META_ROOT/install.sh" "$META_ROOT/verify.sh" "$META_ROOT/install-project-control.sh"
@@ -163,4 +167,4 @@ tar --sort=name --owner=0 --group=0 --numeric-owner -C "$WORK" -cf - "$META_NAME
 mv "$TMP" "$META_ARCHIVE"
 (cd "$OUT_DIR" && sha256sum "$(basename "$META_ARCHIVE")" > "$(basename "$META_ARCHIVE").sha256")
 
-printf 'F2RE meta-bundle for Astra Linux:\n  %s\n  %s.sha256\n' "$META_ARCHIVE" "$META_ARCHIVE"
+printf 'F2RE meta-bundle for Astra Linux %s:\n  %s\n  %s.sha256\n' "$TARGET_ASTRA_VERSION" "$META_ARCHIVE" "$META_ARCHIVE"
