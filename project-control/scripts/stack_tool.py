@@ -18,6 +18,7 @@ import zipfile
 SCHEMA = "f2re-stack-bundle/v1"
 PROJECT_SCHEMA = "f2re-managed-service/v1"
 META_SCHEMA = "f2re-meta-bundle/v1"
+SUPPORTED_ASTRA = {"1.7", "1.8"}
 
 
 def sha256_file(path: Path) -> str:
@@ -61,7 +62,15 @@ def safe_tar_members(archive: tarfile.TarFile):
     return members
 
 
-def inspect_meta(path: Path, managed: dict, expected_commit: Optional[str]):
+def normalize_astra(value: str) -> str:
+    text = str(value or "").strip()
+    for supported in sorted(SUPPORTED_ASTRA):
+        if text == supported or text.startswith(f"{supported}."):
+            return supported
+    raise SystemExit(f"Неподдерживаемая Astra Linux: {text!r}; ожидается 1.7 или 1.8")
+
+
+def inspect_meta(path: Path, managed: dict, expected_commit: Optional[str], expected_astra: Optional[str]):
     digest = verify_sidecar(path)
     with tarfile.open(path, "r:gz") as archive:
         members = safe_tar_members(archive)
@@ -79,8 +88,11 @@ def inspect_meta(path: Path, managed: dict, expected_commit: Optional[str]):
     if release.get("schema") != META_SCHEMA:
         raise SystemExit("Неверная schema meta-bundle")
     target = release.get("target") or {}
-    if target.get("os") != "astra-linux-special-edition" or not str(target.get("version", "")).startswith("1.8"):
-        raise SystemExit("Meta-bundle собран не для Astra Linux 1.8")
+    if target.get("os") != "astra-linux-special-edition":
+        raise SystemExit("Meta-bundle собран не для Astra Linux Special Edition")
+    target_astra = normalize_astra(target.get("version"))
+    if expected_astra and target_astra != normalize_astra(expected_astra):
+        raise SystemExit(f"Meta-bundle target Astra {target_astra} != {normalize_astra(expected_astra)}")
     if target.get("architecture") != "amd64":
         raise SystemExit("One-shot stack v1 публикуется для amd64")
     if expected_commit and release.get("sourceCommit") != expected_commit:
@@ -93,6 +105,7 @@ def inspect_meta(path: Path, managed: dict, expected_commit: Optional[str]):
         "version": release.get("version"),
         "sourceCommit": release.get("sourceCommit"),
         "target": target,
+        "astraVersion": target_astra,
     }
 
 
@@ -151,16 +164,17 @@ def single_match(root: Path, pattern: str) -> Path:
     return matches[0]
 
 
-def verify_inputs(artifacts: Path, managed_path: Path, meta_commit: Optional[str]):
+def verify_inputs(artifacts: Path, managed_path: Path, meta_commit: Optional[str], astra_version: str):
     managed = read_json(managed_path)
     if managed.get("schema") != "f2re-managed-projects/v1":
         raise SystemExit("Некорректный managed-projects.json")
-    meta = inspect_meta(single_match(artifacts, "f2re-meta-*.tar.gz"), managed, meta_commit)
+    astra = normalize_astra(astra_version)
+    meta = inspect_meta(single_match(artifacts, "f2re-meta-*.tar.gz"), managed, meta_commit, astra)
     projects = []
     for project in managed["projects"]:
         package = single_match(artifacts, project["release"]["artifactPattern"])
         projects.append(inspect_project(package, project))
-    return {"meta": meta, "projects": projects, "managed": managed}
+    return {"meta": meta, "projects": projects, "managed": managed, "astraVersion": astra}
 
 
 def write_checksums(root: Path):
@@ -174,16 +188,22 @@ def verify_bundle(root: Path):
     release = read_json(root / "stack-release.json")
     if release.get("schema") != SCHEMA:
         raise SystemExit("Неверная schema stack-release.json")
+    target = release.get("target") or {}
+    if target.get("os") != "astra-linux-special-edition":
+        raise SystemExit("Неверная target.os в stack-release.json")
+    normalize_astra(target.get("version"))
+    if target.get("architecture") != "amd64":
+        raise SystemExit("Неподдерживаемая architecture в stack-release.json")
     checksums = root / "SHA256SUMS"
     if not checksums.is_file():
         raise SystemExit("Нет SHA256SUMS")
     for line in checksums.read_text(encoding="utf-8").splitlines():
         digest, relative = line.split(None, 1)
         relative = relative.strip().lstrip("*")
-        target = (root / relative).resolve()
-        if root.resolve() not in target.parents:
+        target_path = (root / relative).resolve()
+        if root.resolve() not in target_path.parents:
             raise SystemExit(f"Небезопасный checksum path: {relative}")
-        if not target.is_file() or sha256_file(target) != digest:
+        if not target_path.is_file() or sha256_file(target_path) != digest:
             raise SystemExit(f"Checksum не совпал: {relative}")
     meta_file = root / "meta" / release["meta"]["file"]
     if not meta_file.is_file():
@@ -192,16 +212,17 @@ def verify_bundle(root: Path):
         path = root / "projects" / project["file"]
         if not path.is_file():
             raise SystemExit(f"Нет package {project['projectId']}: {path.name}")
-    print(f"stack-ok: {len(release['projects'])} projects + meta {release['meta']['version']}")
+    print(f"stack-ok: Astra {normalize_astra(target.get('version'))}; {len(release['projects'])} projects + meta {release['meta']['version']}")
     return release
 
 
-def pack(artifacts: Path, managed_path: Path, output: Path, version: str, meta_commit: str):
-    info = verify_inputs(artifacts, managed_path, meta_commit)
+def pack(artifacts: Path, managed_path: Path, output: Path, version: str, meta_commit: str, astra_version: str):
+    astra = normalize_astra(astra_version)
+    info = verify_inputs(artifacts, managed_path, meta_commit, astra)
     scripts = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix="f2re-stack-") as temp:
         temp_root = Path(temp)
-        name = f"f2re-stack-{version}-astra-1.8-amd64"
+        name = f"f2re-stack-{version}-astra-{astra}-amd64"
         root = temp_root / name
         (root / "meta").mkdir(parents=True)
         (root / "projects").mkdir()
@@ -219,7 +240,7 @@ def pack(artifacts: Path, managed_path: Path, output: Path, version: str, meta_c
             "version": version,
             "builtAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "sourceCommit": meta_commit,
-            "target": {"os": "astra-linux-special-edition", "version": "1.8", "architecture": "amd64"},
+            "target": {"os": "astra-linux-special-edition", "version": astra, "architecture": "amd64"},
             "meta": info["meta"],
             "projects": info["projects"],
         }
@@ -229,7 +250,7 @@ def pack(artifacts: Path, managed_path: Path, output: Path, version: str, meta_c
             encoding="utf-8",
         )
         (root / "README-INSTALL.txt").write_text(
-            f"F2RE Stack {version} / Astra Linux 1.8 amd64\n\n"
+            f"F2RE Stack {version} / Astra Linux {astra} amd64\n\n"
             "Проверка: ./verify.sh\n"
             "Полное развёртывание: sudo ./deploy-stack.sh\n"
             "Только приложения поверх установленного Project Control: sudo ./deploy-stack.sh --skip-meta\n"
@@ -262,6 +283,7 @@ def main() -> int:
     verify_inputs_parser.add_argument("artifacts")
     verify_inputs_parser.add_argument("managed")
     verify_inputs_parser.add_argument("--meta-commit")
+    verify_inputs_parser.add_argument("--astra-version", default="1.8", choices=sorted(SUPPORTED_ASTRA))
     verify_bundle_parser = sub.add_parser("verify-bundle")
     verify_bundle_parser.add_argument("root")
     pack_parser = sub.add_parser("pack")
@@ -270,14 +292,15 @@ def main() -> int:
     pack_parser.add_argument("output")
     pack_parser.add_argument("--version", required=True)
     pack_parser.add_argument("--meta-commit", required=True)
+    pack_parser.add_argument("--astra-version", default="1.8", choices=sorted(SUPPORTED_ASTRA))
     args = parser.parse_args()
     if args.command == "verify-inputs":
-        info = verify_inputs(Path(args.artifacts), Path(args.managed), args.meta_commit)
-        print(json.dumps({"meta": info["meta"], "projects": info["projects"]}, ensure_ascii=False, indent=2))
+        info = verify_inputs(Path(args.artifacts), Path(args.managed), args.meta_commit, args.astra_version)
+        print(json.dumps({"meta": info["meta"], "projects": info["projects"], "astraVersion": info["astraVersion"]}, ensure_ascii=False, indent=2))
     elif args.command == "verify-bundle":
         verify_bundle(Path(args.root).resolve())
     elif args.command == "pack":
-        pack(Path(args.artifacts).resolve(), Path(args.managed).resolve(), Path(args.output).resolve(), args.version, args.meta_commit)
+        pack(Path(args.artifacts).resolve(), Path(args.managed).resolve(), Path(args.output).resolve(), args.version, args.meta_commit, args.astra_version)
     return 0
 
 
