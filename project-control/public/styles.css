@@ -6,6 +6,8 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
+body.dialog-fallback-active { overflow: hidden; }
+body.dialog-fallback-active::before { content: ""; position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,.35); }
 button, input { font: inherit; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
 .topbar, main { width: min(1280px, calc(100% - 32px)); margin-inline: auto; }
@@ -83,6 +85,10 @@ dialog { width: min(460px, calc(100% - 28px)); border: 0; border-radius: 20px; p
 dialog::backdrop { background: rgba(0,0,0,.35); backdrop-filter: blur(4px); }
 dialog form { display: grid; gap: 14px; }
 dialog h2, dialog p { margin: 0; }
+#keyDialog.dialog-fallback { display: none; width: min(460px, calc(100% - 28px)); border: 0; border-radius: 20px; padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.24); background: #fff; color: #171717; }
+#keyDialog.dialog-fallback[open] { display: block; position: fixed; z-index: 1000; top: 50%; left: 50%; transform: translate(-50%, -50%); margin: 0; max-height: calc(100vh - 28px); overflow: auto; }
+#keyDialog.dialog-fallback form { display: grid; gap: 14px; }
+#keyDialog.dialog-fallback h2, #keyDialog.dialog-fallback p { margin: 0; }
 input[type=password] { min-height: 44px; border: 1px solid #bbb; border-radius: 10px; padding: 0 12px; }
 .error-text { min-height: 1.2em; color: #a1261c; }
 @media (max-width: 980px) { .discovery-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .details-grid { grid-template-columns: 1fr; } .topbar { align-items: start; flex-direction: column; } }
@@ -101,4 +107,5 @@ input[type=password] { min-height: 44px; border: 1px solid #bbb; border-radius: 
   .compact-list, .compact-row, th, td { border-color: #323235; }
   .progress { background: #303033; }
   input[type=password] { background: #1c1c1e; color: white; border-color: #555; }
+  #keyDialog.dialog-fallback { background: #1c1c1e; color: #f5f5f7; }
 }

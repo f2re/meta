@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Project Control</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23171717'/%3E%3Cpath d='M17 18h30v8H25v12h20v8H25v10h-8z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -77,12 +78,12 @@
     </section>
   </main>
 
-  <dialog id="keyDialog">
+  <dialog id="keyDialog" aria-labelledby="keyDialogTitle">
     <form method="dialog" id="keyForm">
-      <h2>Ключ доступа</h2>
+      <h2 id="keyDialogTitle">Ключ доступа</h2>
       <p>Ключ создаётся при установке Project Control и хранится в <code>/root/project-control-access.txt</code>.</p>
       <label for="accessKey">Ключ</label>
-      <input id="accessKey" name="accessKey" type="password" autocomplete="off" required minlength="24">
+      <input id="accessKey" name="accessKey" type="password" autocomplete="current-password" required minlength="24">
       <p id="keyError" class="error-text" aria-live="polite"></p>
       <div class="dialog-actions">
         <button type="button" id="cancelKeyButton" class="button secondary">Отмена</button>
@@ -125,6 +126,7 @@
     </article>
   </template>
 
+  <script src="dialog-polyfill.js"></script>
   <script src="app.js" type="module"></script>
 </body>
 </html>
