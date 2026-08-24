@@ -15,7 +15,7 @@ Project Control — локальный сервис единого монито�
 
 Latest release: <https://github.com/f2re/meta/releases/latest>
 
-## Что показывает интерфейс 0.5.2
+## Что показывает интерфейс 0.5.3
 
 UI выполняет фактический runtime discovery:
 
@@ -78,6 +78,12 @@ gh auth login
 В режиме `auto` сначала скачиваются CI artifacts exact-SHA. Если конкретного artifact ещё нет, выполняется локальный fallback build. Системный Node.js для этого не нужен: официальный standalone Node.js скачивается автоматически, проверяется по `SHASUMS256.txt` и затем явно передаётся builder-ам. Для отдельных fallback builder-ов дополнительно могут потребоваться `curl`, `xz`, `python3-venv` и Docker.
 
 `stack_tool.py` проверяет target metadata: bundle 1.8 нельзя использовать как 1.7 простым переименованием. После подготовки stack переносится в закрытый контур и запускается `sudo ./deploy-stack.sh`.
+
+Если Project Control доступен через reverse proxy prefix, `deploy-stack.sh` использует тот же prefix для ping, chunk upload, job polling и проверки итогового состояния:
+
+```bash
+sudo ./deploy-stack.sh --url https://server.example/project-control/
+```
 
 Если нужно строго только скачать проверенные CI artifacts и не разрешать fallback build:
 
