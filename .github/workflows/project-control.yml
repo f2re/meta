@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   test:
-    name: Contract, Astra deployment and meta-bundle
+    name: Contract, stack, Astra deployment and meta-bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     defaults:
@@ -39,18 +39,27 @@ jobs:
         with:
           python-version: "3.8"
 
-      - name: Node, Python and compatibility tests
+      - name: Node, Python, stack and compatibility tests
         run: npm run check
 
       - name: Python syntax
         run: |
-          python3 -m py_compile src/package_tool.py scripts/package-release.py
+          python3 -m py_compile \
+            src/package_tool.py \
+            scripts/package-release.py \
+            scripts/stack_tool.py \
+            scripts/apply-package.py
 
       - name: Shell syntax
         run: |
           while IFS= read -r -d '' script; do
             bash -n "$script"
           done < <(find deploy scripts -type f -name '*.sh' -print0)
+
+      - name: Stack CLI smoke
+        run: |
+          ./scripts/f2re-stack.sh --help >/dev/null
+          ./scripts/deploy-stack.sh --help >/dev/null
 
       - name: Prepare portable Node.js runtime
         id: runtime
