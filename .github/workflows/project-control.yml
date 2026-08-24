@@ -26,9 +26,9 @@ permissions:
 
 jobs:
   contract:
-    name: Contract, tests and controller bundle
+    name: Contract, local stack and controller bundle
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: project-control
@@ -74,6 +74,31 @@ jobs:
           ./scripts/f2re-stack.sh prepare --astra 1.7 --help >/dev/null
           ./scripts/f2re-stack.sh prepare --astra 1.8 --help >/dev/null
           ./scripts/deploy-stack.sh --help >/dev/null
+
+      - name: Build complete F2RE Stack locally without Docker
+        env:
+          F2RE_STACK_WORK_DIR: ${{ runner.temp }}/f2re-stack-local-work
+        run: |
+          set -Eeuo pipefail
+          DIST="$RUNNER_TEMP/f2re-stack-local-dist"
+          mkdir -p "$DIST"
+          ./scripts/f2re-stack.sh build --astra 1.7 --output "$DIST"
+          cd "$DIST"
+          mapfile -t stacks < <(find . -maxdepth 1 -type f -name 'f2re-stack-*-astra-1.7-amd64.tar.gz' -print)
+          test "${#stacks[@]}" -eq 1
+          sha256sum -c --strict "${stacks[0]#./}.sha256"
+          test -f stack-inputs-1.7/docomator-0.6.3-linux-x64.tar.gz
+          find stack-inputs-1.7 -maxdepth 1 -type f -name 'docomator-*-project-control.f2re.zip' -print -quit | grep -q .
+          find stack-inputs-1.7 -maxdepth 1 -type f -name 'planer-solving-*-project-control.f2re.zip' -print -quit | grep -q .
+          KAFEDRA_PACKAGE="$(find stack-inputs-1.7 -maxdepth 1 -type f -name 'kafedra-planner-*-project-control.f2re.zip' -print -quit)"
+          test -n "$KAFEDRA_PACKAGE"
+          python3 - "$KAFEDRA_PACKAGE" <<'PY'
+          import json, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              manifest=json.loads(z.read('f2re-service.json'))
+          assert manifest['nativeBundleFormat']=='kafedra-runtime-offline-v1', manifest
+          print('local-stack-ok:', manifest['projectId'], manifest['version'], manifest['nativeBundleFormat'])
+          PY
 
       - name: Prepare portable Node.js runtime
         id: runtime
