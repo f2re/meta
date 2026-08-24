@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { ADAPTERS } from "./adapters.mjs";
 import { INCOMING_DIR, SOCKET_PATH, ensureDataDirs, jsonResponse, readJsonBody } from "./common.mjs";
 import { discoverHost } from "./discovery.mjs";
+import { normalizeRequestPath, shouldRedirectToSlash } from "./web_utils.mjs";
 
 const VERSION = process.env.PROJECT_CONTROL_VERSION || "0.1.0";
 const HOST = process.env.PROJECT_CONTROL_HOST || "0.0.0.0";
@@ -21,9 +22,7 @@ let discoveryCache = { at: 0, value: null, promise: null };
 
 if (!ACCESS_TOKEN || ACCESS_TOKEN.length < 24) throw new Error("PROJECT_CONTROL_ACCESS_TOKEN должен быть задан и иметь длину не менее 24 символов.");
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("Некорректный PROJECT_CONTROL_PORT.");
-if (!Number.isInteger(CHUNK_BYTES) || CHUNK_BYTES < 64 * 1024 || CHUNK_BYTES > 768 * 1024) {
-  throw new Error("PROJECT_CONTROL_UPLOAD_CHUNK_BYTES должен быть от 64 до 768 КиБ.");
-}
+if (!Number.isInteger(CHUNK_BYTES) || CHUNK_BYTES < 64 * 1024 || CHUNK_BYTES > 768 * 1024) throw new Error("PROJECT_CONTROL_UPLOAD_CHUNK_BYTES должен быть от 64 до 768 КиБ.");
 
 function authorized(request) {
   const header = String(request.headers.authorization || "");
@@ -32,7 +31,6 @@ function authorized(request) {
   const expected = Buffer.from(ACCESS_TOKEN, "utf8");
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
-
 function requireAuth(request, response) {
   if (authorized(request)) return true;
   jsonResponse(response, 401, { error: "Требуется ключ доступа Project Control." });
@@ -51,17 +49,12 @@ async function executorRequest(endpoint, body = {}) {
     }, (response) => {
       const chunks = [];
       let size = 0;
-      response.on("data", (chunk) => {
-        size += chunk.length;
-        if (size <= 4 * 1024 * 1024) chunks.push(chunk);
-      });
+      response.on("data", (chunk) => { size += chunk.length; if (size <= 4 * 1024 * 1024) chunks.push(chunk); });
       response.on("end", () => {
         let parsed;
         try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); }
         catch { return reject(new Error("Executor вернул некорректный ответ.")); }
-        if ((response.statusCode || 500) >= 400) {
-          return reject(Object.assign(new Error(parsed.error || "Ошибка executor."), { statusCode: response.statusCode || 500 }));
-        }
+        if ((response.statusCode || 500) >= 400) return reject(Object.assign(new Error(parsed.error || "Ошибка executor."), { statusCode: response.statusCode || 500 }));
         resolve(parsed);
       });
     });
@@ -75,23 +68,6 @@ function contentType(filePath) {
   if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8";
   if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
   return "application/octet-stream";
-}
-
-export function normalizeRequestPath(pathname) {
-  const value = String(pathname || "/");
-  if (value === "/") return "/";
-  const apiIndex = value.indexOf("/api/");
-  if (apiIndex >= 0) return value.slice(apiIndex);
-  if (value.endsWith("/app.js")) return "/app.js";
-  if (value.endsWith("/styles.css")) return "/styles.css";
-  if (value.endsWith("/favicon.ico")) return "/favicon.ico";
-  if (value.endsWith("/")) return "/";
-  return value;
-}
-
-function shouldRedirectToSlash(originalPath, normalizedPath) {
-  return originalPath !== "/" && normalizedPath === originalPath && !originalPath.endsWith("/")
-    && !path.posix.extname(originalPath) && !originalPath.includes("/api/");
 }
 
 async function serveStatic(request, response, pathname) {
@@ -116,11 +92,9 @@ function safeOriginalName(value) {
   const name = path.basename(String(value || "package.f2re.zip")).replace(/[^A-Za-z0-9А-Яа-яЁё._+() -]+/g, "_").slice(0, 180);
   return name || "package.f2re.zip";
 }
-
 function assertProject(projectId) {
   if (!Object.hasOwn(ADAPTERS, projectId)) throw Object.assign(new Error("Неизвестный проект."), { statusCode: 404 });
 }
-
 async function sha256File(filePath) {
   return await new Promise((resolve, reject) => {
     const hash = createHash("sha256");
@@ -161,12 +135,9 @@ async function receiveUpload(request) {
 
 function safeUuid(value, label = "идентификатор") {
   const id = String(value || "");
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
-    throw Object.assign(new Error(`Некорректный ${label}.`), { statusCode: 400 });
-  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw Object.assign(new Error(`Некорректный ${label}.`), { statusCode: 400 });
   return id;
 }
-
 function uploadPaths(id) {
   const safe = safeUuid(id, "идентификатор загрузки");
   return {
@@ -176,7 +147,6 @@ function uploadPaths(id) {
     job: path.join(INCOMING_DIR, `${safe}.job.json`)
   };
 }
-
 async function readUploadMeta(id) {
   const paths = uploadPaths(id);
   try { return { paths, meta: JSON.parse(await fs.readFile(paths.meta, "utf8")) }; }
@@ -185,7 +155,6 @@ async function readUploadMeta(id) {
     throw error;
   }
 }
-
 async function atomicJson(file, value) {
   const temporary = `${file}.tmp.${process.pid}.${randomUUID()}`;
   await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o640 });
@@ -246,16 +215,10 @@ async function abortChunkedUpload(id) {
 }
 
 async function runApplyJob(paths, meta, digest) {
-  let job = {
-    jobId: meta.id, projectId: meta.projectId, originalName: meta.originalName,
-    status: "running", startedAt: new Date().toISOString(), received: meta.expectedSize
-  };
+  let job = { jobId: meta.id, projectId: meta.projectId, originalName: meta.originalName, status: "running", startedAt: new Date().toISOString(), received: meta.expectedSize };
   await atomicJson(paths.job, job);
   try {
-    const result = await executorRequest("/apply", {
-      projectId: meta.projectId, uploadPath: paths.final, originalName: meta.originalName,
-      uploadSha256: digest, uploadSize: meta.expectedSize
-    });
+    const result = await executorRequest("/apply", { projectId: meta.projectId, uploadPath: paths.final, originalName: meta.originalName, uploadSha256: digest, uploadSize: meta.expectedSize });
     job = { ...job, status: "success", finishedAt: new Date().toISOString(), result };
     discoveryCache.at = 0;
   } catch (error) {
@@ -283,7 +246,6 @@ async function completeChunkedUpload(id) {
     return initial;
   } finally { uploadLocks.delete(safeId); }
 }
-
 async function readJob(id) {
   const paths = uploadPaths(id);
   try { return JSON.parse(await fs.readFile(paths.job, "utf8")); }
@@ -316,6 +278,35 @@ async function getDiscovery(force = false) {
   return await promise;
 }
 
+function discoveryServiceState(found, name) {
+  const unit = found?.services?.find((service) => service.name === name);
+  return { name, active: Boolean(unit?.active), enabled: Boolean(unit?.enabled) };
+}
+function fallbackStatus(discovery, executorError) {
+  const byId = new Map(discovery.projects.map((project) => [project.id, project]));
+  return {
+    projects: Object.values(ADAPTERS).map((adapter) => {
+      const found = byId.get(adapter.id);
+      return {
+        id: adapter.id,
+        displayName: adapter.displayName,
+        installed: false,
+        release: null,
+        version: null,
+        requiredServices: adapter.requiredServices.map((name) => discoveryServiceState(found, name)),
+        optionalServices: adapter.optionalServices.map((name) => discoveryServiceState(found, name)),
+        health: found?.health || { ok: false, error: executorError },
+        healthy: false,
+        lastUpdatedAt: null,
+        lastOperation: null,
+        lastFailure: null
+      };
+    }),
+    operationRunning: false,
+    requireSignature: null,
+    history: []
+  };
+}
 function mergeStatusWithDiscovery(status, discovery) {
   const byId = new Map(discovery.projects.map((project) => [project.id, project]));
   const projects = (status.projects || []).map((project) => {
@@ -323,7 +314,8 @@ function mergeStatusWithDiscovery(status, discovery) {
     return { ...project, observedVersion: project.version || found?.detectedVersion || null, detected: found?.detected || project.installed, discovery: found };
   });
   return {
-    ...status, projects,
+    ...status,
+    projects,
     discovery: {
       scannedAt: discovery.scannedAt, durationMs: discovery.durationMs, diagnostics: discovery.diagnostics,
       listeningPorts: discovery.listeningPorts, nginx: discovery.nginx, opt: discovery.opt, systemd: discovery.systemd,
@@ -333,8 +325,15 @@ function mergeStatusWithDiscovery(status, discovery) {
 }
 
 async function projectsStatus(forceDiscovery = false) {
-  const [status, discovery] = await Promise.all([executorRequest("/status"), getDiscovery(forceDiscovery)]);
-  return mergeStatusWithDiscovery(status, discovery);
+  const discovery = await getDiscovery(forceDiscovery);
+  let status;
+  let executorError = null;
+  try { status = await executorRequest("/status"); }
+  catch (error) {
+    executorError = error.message || String(error);
+    status = fallbackStatus(discovery, executorError);
+  }
+  return { ...mergeStatusWithDiscovery(status, discovery), executorError };
 }
 
 async function route(request, response) {
@@ -419,7 +418,6 @@ server.requestTimeout = 0;
 server.headersTimeout = 65_000;
 server.keepAliveTimeout = 5_000;
 server.listen(PORT, HOST, () => console.log(`Project Control ${VERSION}: http://${HOST}:${PORT}`));
-
 const stop = () => server.close(() => process.exit(0));
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
