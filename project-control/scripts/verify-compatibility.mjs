@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { ADAPTERS } from "../src/adapters.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const manifestPath = join(here, "..", "config", "managed-projects.json");
+const manifestPath = process.env.F2RE_MANAGED_PROJECTS_FILE
+  ? resolve(process.env.F2RE_MANAGED_PROJECTS_FILE)
+  : join(here, "..", "config", "managed-projects.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 
 function fail(message) {
@@ -55,4 +57,4 @@ for (const project of manifest.projects) {
   same(project.native, adapter.native, `${project.projectId}.native`);
 }
 
-console.log(`compatibility-ok: ${manifest.projects.length} projects (${listed.join(", ")})`);
+console.log(`compatibility-ok: ${manifest.projects.length} projects (${listed.join(", ")}); manifest=${manifestPath}`);
