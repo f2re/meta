@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from typing import Optional
 import zipfile
 
 SCHEMA = "f2re-stack-bundle/v1"
@@ -60,7 +61,7 @@ def safe_tar_members(archive: tarfile.TarFile):
     return members
 
 
-def inspect_meta(path: Path, managed: dict, expected_commit: str | None):
+def inspect_meta(path: Path, managed: dict, expected_commit: Optional[str]):
     digest = verify_sidecar(path)
     with tarfile.open(path, "r:gz") as archive:
         members = safe_tar_members(archive)
@@ -150,7 +151,7 @@ def single_match(root: Path, pattern: str) -> Path:
     return matches[0]
 
 
-def verify_inputs(artifacts: Path, managed_path: Path, meta_commit: str | None):
+def verify_inputs(artifacts: Path, managed_path: Path, meta_commit: Optional[str]):
     managed = read_json(managed_path)
     if managed.get("schema") != "f2re-managed-projects/v1":
         raise SystemExit("Некорректный managed-projects.json")
@@ -242,7 +243,7 @@ def pack(artifacts: Path, managed_path: Path, output: Path, version: str, meta_c
         archive_path = output / f"{name}.tar.gz"
         with archive_path.open("wb") as raw:
             proc_gzip = subprocess.Popen(["gzip", "-n", "-6"], stdin=subprocess.PIPE, stdout=raw)
-            proc_tar = subprocess.run(
+            subprocess.run(
                 ["tar", "--sort=name", "--owner=0", "--group=0", "--numeric-owner", "-C", str(temp_root), "-cf", "-", name],
                 stdout=proc_gzip.stdin,
                 check=True,
