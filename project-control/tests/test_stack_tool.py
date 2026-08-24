@@ -97,6 +97,7 @@ class StackToolTests(unittest.TestCase):
             subprocess.run([sys.executable, stack_root / "stack_tool.py", "verify-bundle", stack_root], check=True)
             dry = subprocess.run([stack_root / "deploy-stack.sh", "--dry-run"], check=True, text=True, stdout=subprocess.PIPE)
             self.assertIn("Dry-run: изменений не внесено", dry.stdout)
+            self.assertIn("fresh ports API=8090, LLM=8091", dry.stdout)
             release = json.loads((stack_root / "stack-release.json").read_text(encoding="utf-8"))
             self.assertEqual([p["projectId"] for p in release["projects"]], ["docomator", "planer-solving", "kafedra-planner"])
 
