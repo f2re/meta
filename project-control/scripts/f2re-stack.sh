@@ -13,6 +13,7 @@ WORK_DIR="${F2RE_STACK_WORK_DIR:-}"
 KEEP_WORK=false
 NODE_VERSION="${F2RE_NODE_VERSION:-24.19.0}"
 NODE_RUNTIME_RESOLVED=""
+BUILD_PYTHON_RESOLVED=""
 
 usage() {
   cat <<'EOF'
@@ -23,22 +24,24 @@ F2RE Stack — локальная сборка всех offline bundle одно�
   ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--output DIR]
   ./scripts/f2re-stack.sh pack [--astra 1.7|1.8] [--input DIR] [--output DIR]
 
-prepare (по умолчанию) = build: прямо на текущей Linux build-машине клонирует
-закреплённые exact-SHA исходники meta, docomator, planer-solving и kafedra-planner,
-собирает их и формирует один f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz.
+prepare (по умолчанию) = build: прямо на текущей Linux build-машине получает
+закреплённые exact-SHA исходники docomator, planer-solving и kafedra-planner,
+собирает их вместе с meta и формирует один f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz.
 Docker не используется и не требуется.
 
 --source auto: сначала ищет exact-SHA GitHub Actions artifacts и локально собирает
 только отсутствующие компоненты. --source download запрещает локальную сборку.
 
 Системный Node.js не требуется: официальный standalone Node.js автоматически
-скачивается и проверяется по SHASUMS256.txt.
+скачивается и проверяется по SHASUMS256.txt. Для planer-solving нужен Python
+3.11+; скрипт сам выбирает подходящий интерпретатор, предпочитая /usr/bin/python3.
 
 Переменные:
   F2RE_TARGET_ASTRA_VERSION целевая Astra Linux (1.7 или 1.8; default 1.8)
   F2RE_STACK_SOURCE_MODE    build (default), auto или download
   NODE_RUNTIME_DIR          готовый автономный Linux Node.js runtime
   F2RE_NODE_VERSION         версия Node для автозагрузки (24.19.0)
+  F2RE_PYTHON_BIN           Python 3.11+ для сборки planer-solving
   F2RE_RELEASE_SIGNING_KEY  Ed25519 private key для локальной пересборки wrappers
 EOF
 }
@@ -144,6 +147,35 @@ require_node_runtime() {
   echo "    Node runtime: $NODE_RUNTIME_RESOLVED ($("$NODE_RUNTIME_RESOLVED/bin/node" --version))" >&2
 }
 
+ensure_build_python() {
+  BUILD_PYTHON_RESOLVED=""
+  local candidate resolved
+  local candidates=()
+  [[ -z "${F2RE_PYTHON_BIN:-}" ]] || candidates+=("$F2RE_PYTHON_BIN")
+  candidates+=(/usr/bin/python3 python3.13 python3.12 python3.11 python3)
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == */* ]]; then
+      [[ -x "$candidate" ]] || continue
+      resolved="$candidate"
+    else
+      resolved="$(command -v "$candidate" 2>/dev/null || true)"
+      [[ -n "$resolved" && -x "$resolved" ]] || continue
+    fi
+    if "$resolved" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+      BUILD_PYTHON_RESOLVED="$(readlink -f "$resolved" 2>/dev/null || printf '%s' "$resolved")"
+      return 0
+    fi
+  done
+  echo "Для локальной сборки planer-solving нужен Python 3.11 или новее. Установите python3.11+ или задайте F2RE_PYTHON_BIN." >&2
+  return 2
+}
+
+require_build_python() {
+  if [[ -z "$BUILD_PYTHON_RESOLVED" ]]; then ensure_build_python; fi
+  [[ -x "$BUILD_PYTHON_RESOLVED" ]] || return 2
+  echo "    Python build runtime: $BUILD_PYTHON_RESOLVED ($("$BUILD_PYTHON_RESOLVED" --version 2>&1))" >&2
+}
+
 clone_exact() {
   local repo="$1" commit="$2" dest="$3"
   rm -rf "$dest"; mkdir -p "$dest"
@@ -165,7 +197,6 @@ build_docomator() {
   local repo="$1" commit="$2" dest="$3" runtime="$4" src="$WORK_DIR/src-docomator"
   echo "==> docomator: локальная сборка $commit"
   clone_exact "$repo" "$commit" "$src"
-  (cd "$src" && PATH="$runtime/bin:$PATH" npm ci --ignore-scripts --no-audit --no-fund)
   mkdir -p "$dest"
   (cd "$src" && PATH="$runtime/bin:$PATH" PROJECT_CONTROL_PYTHON_BIN=python3 \
     ./scripts/project-control/build-bundle.sh \
@@ -174,10 +205,13 @@ build_docomator() {
 }
 
 build_planer() {
-  local repo="$1" commit="$2" dest="$3" src="$WORK_DIR/src-planer" venv="$WORK_DIR/planer-venv"
+  local repo="$1" commit="$2" dest="$3" src="$WORK_DIR/src-planer" venv="$WORK_DIR/planer-venv" python_bin
   echo "==> planer-solving: локальная сборка $commit"
   clone_exact "$repo" "$commit" "$src"
-  python3 -m venv "$venv" || { echo "Нужен python3-venv для локальной сборки planer-solving" >&2; return 2; }
+  require_build_python
+  python_bin="$BUILD_PYTHON_RESOLVED"
+  rm -rf "$venv"
+  "$python_bin" -m venv "$venv" || { echo "Не удалось создать venv через $python_bin. Проверьте модуль venv для Python 3.11+." >&2; return 2; }
   "$venv/bin/python" -m pip install --disable-pip-version-check -q -r "$src/requirements.txt"
   mkdir -p "$dest"
   (cd "$src" && PYTHON_BIN="$venv/bin/python" ./offline/build_project_control_bundle.sh --output "$dest" --python "$venv/bin/python") >/dev/null
