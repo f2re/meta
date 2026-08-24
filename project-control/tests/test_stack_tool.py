@@ -23,23 +23,23 @@ def sidecar(path: Path):
 
 
 class StackToolTests(unittest.TestCase):
-    def create_meta(self, root: Path, managed: dict) -> Path:
+    def create_meta(self, root: Path, managed: dict, astra_version: str) -> Path:
         source = root / "meta-root"
         source.mkdir()
         (source / "meta-release.json").write_text(json.dumps({
             "schema": "f2re-meta-bundle/v1",
-            "version": "0.3.0",
+            "version": "0.5.0",
             "sourceCommit": META_COMMIT,
-            "target": {"os": "astra-linux-special-edition", "version": "1.8", "architecture": "amd64"},
+            "target": {"os": "astra-linux-special-edition", "version": astra_version, "architecture": "amd64"},
         }), encoding="utf-8")
         (source / "managed-projects.json").write_text(json.dumps(managed, ensure_ascii=False), encoding="utf-8")
         for name in ("verify.sh", "install.sh"):
             target = source / name
             target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             target.chmod(0o755)
-        archive = root / "f2re-meta-0.3.0-astra-1.8-amd64.tar.gz"
+        archive = root / f"f2re-meta-0.5.0-astra-{astra_version}-amd64.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
-            tar.add(source, arcname="f2re-meta-0.3.0-astra-1.8-amd64")
+            tar.add(source, arcname=f"f2re-meta-0.5.0-astra-{astra_version}-amd64")
         sidecar(archive)
         return archive
 
@@ -64,23 +64,28 @@ class StackToolTests(unittest.TestCase):
         sidecar(package)
         return package
 
-    def test_verify_pack_and_dry_run(self):
+    def exercise_target(self, astra_version: str):
         managed = json.loads(MANAGED.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temp:
             temp_root = Path(temp)
             inputs = temp_root / "inputs"
             output = temp_root / "output"
             inputs.mkdir()
-            self.create_meta(inputs, managed)
+            self.create_meta(inputs, managed, astra_version)
             for project in managed["projects"]:
                 self.create_project(inputs, project)
 
-            subprocess.run([sys.executable, TOOL, "verify-inputs", inputs, MANAGED, "--meta-commit", META_COMMIT], check=True)
+            subprocess.run([
+                sys.executable, TOOL, "verify-inputs", inputs, MANAGED,
+                "--meta-commit", META_COMMIT, "--astra-version", astra_version,
+            ], check=True)
             result = subprocess.run([
                 sys.executable, TOOL, "pack", inputs, MANAGED, output,
-                "--version", "0.3.0", "--meta-commit", META_COMMIT,
+                "--version", "0.5.0", "--meta-commit", META_COMMIT,
+                "--astra-version", astra_version,
             ], check=True, text=True, stdout=subprocess.PIPE)
             bundle = Path(result.stdout.strip().splitlines()[-1])
+            self.assertEqual(bundle.name, f"f2re-stack-0.5.0-astra-{astra_version}-amd64.tar.gz")
             self.assertTrue(bundle.is_file())
             self.assertTrue(Path(f"{bundle}.sha256").is_file())
 
@@ -99,7 +104,29 @@ class StackToolTests(unittest.TestCase):
             self.assertIn("Dry-run: изменений не внесено", dry.stdout)
             self.assertIn("fresh ports API=8090, LLM=8091", dry.stdout)
             release = json.loads((stack_root / "stack-release.json").read_text(encoding="utf-8"))
+            self.assertEqual(release["target"]["version"], astra_version)
             self.assertEqual([p["projectId"] for p in release["projects"]], ["docomator", "planer-solving", "kafedra-planner"])
+
+    def test_astra_17_stack(self):
+        self.exercise_target("1.7")
+
+    def test_astra_18_stack(self):
+        self.exercise_target("1.8")
+
+    def test_target_mismatch_is_rejected(self):
+        managed = json.loads(MANAGED.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as temp:
+            inputs = Path(temp) / "inputs"
+            inputs.mkdir()
+            self.create_meta(inputs, managed, "1.8")
+            for project in managed["projects"]:
+                self.create_project(inputs, project)
+            result = subprocess.run([
+                sys.executable, TOOL, "verify-inputs", inputs, MANAGED,
+                "--meta-commit", META_COMMIT, "--astra-version", "1.7",
+            ], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("target Astra 1.8 != 1.7", result.stderr + result.stdout)
 
 
 if __name__ == "__main__":
