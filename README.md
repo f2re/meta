@@ -61,7 +61,7 @@ UI: `http://<server>:9090/` либо nginx path prefix, например `/proje
 | Astra Linux Special Edition **1.8** | amd64 | ✅ | официальный `astra/ubi18-python311` | ✅ |
 | Debian | amd64 | совместимая база | unit/installer contracts | portable controller |
 
-CI не ограничивается созданием архива: для обеих веток Astra выполняются распаковка release bundle, `verify.sh`, штатный installer, запуск bundled Node runtime, executor IPC, UI/API, discovery и chunk-upload smoke.
+CI проверяет не только архив контроллера: выполняются unit/contracts, реальная локальная сборка полного F2RE Stack без Docker, а затем распаковка и deployment smoke meta-bundle в обеих ветках Astra.
 
 ## Что умеет Project Control
 
@@ -97,47 +97,52 @@ flowchart LR
 ```mermaid
 flowchart LR
     M[main + VERSION] --> C[Contract tests]
-    C --> A17[Astra 1.7 build]
-    C --> A18[Astra 1.8 build]
+    C --> L[Local full-stack build without Docker]
+    L --> A17[Astra 1.7 build]
+    L --> A18[Astra 1.8 build]
     A17 --> T17[UBI 1.7 deployment smoke]
     A18 --> T18[UBI 1.8 deployment smoke]
     T17 --> R[GitHub Release vX.Y.Z]
     T18 --> R
     R --> S[SHA256SUMS]
     R --> J[release-manifest.json]
-    R --> D[Stable latest downloads]
 ```
-
-Официальная Astra Linux UBI документация поддерживает отдельные `ubi17` и `ubi18` container families; Project Control проверяется в обеих ветках до публикации release.
 
 ## F2RE Stack — вся система одним махом
 
-На Linux build-машине с интернетом:
+На обычной Linux build-машине с интернетом:
 
 ```bash
 git clone https://github.com/f2re/meta.git
 cd meta
 git pull --ff-only
-git rev-parse HEAD
-cd project-control
-gh auth login
 
-./scripts/f2re-stack.sh prepare --astra 1.7
+./project-control/scripts/f2re-stack.sh prepare --astra 1.7
 # или
-./scripts/f2re-stack.sh prepare --astra 1.8
+./project-control/scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
-`prepare` работает от **exact SHA локального checkout**. Если в диагностике скрипта отображается старый commit, сначала выполните `git pull --ff-only`: скрипт специально не заменяет исходники более новым `main` скрытно.
+Это теперь основной режим: `prepare` по умолчанию локально собирает **meta + docomator + planer-solving + kafedra-planner** из закреплённых exact SHA и затем упаковывает единый stack.
 
-В `auto`-режиме сначала ищутся CI artifacts exact-SHA. Отсутствующий artifact пересобирается локально. Системный Node.js не требуется: официальный standalone Node.js 24 автоматически загружается, проверяется по `SHASUMS256.txt` и передаётся builder-ам явно. Для fallback отдельных подпроектов могут понадобиться `curl`, `xz`, `python3-venv` и Docker.
+**Docker не нужен. GitHub CLI не нужен. Системный Node.js не нужен.** Скрипт сам скачивает и проверяет standalone Node.js 24.19.0. Для `planer-solving` нужен `python3-venv`; для runtime — `curl` и `xz`.
 
-Если fallback build недопустим и нужны только готовые проверенные artifacts:
+Kafedra локально собирается штатным runtime-offline builder без контейнера. Это полноценное ядро приложения с автономным Node.js. OCR/Poppler/LibreOffice используются с целевой ОС, если установлены. Полный target-specific `full-airgap` Kafedra с `.deb`-слоем остаётся доступным как CI/download variant.
+
+Если нужны готовые exact-SHA CI artifacts с локальным fallback:
+
+```bash
+cd project-control
+gh auth login
+./scripts/f2re-stack.sh prepare --astra 1.7 --source auto
+```
+
+Если нужны только готовые artifacts и локальная сборка запрещена:
 
 ```bash
 ./scripts/f2re-stack.sh prepare --astra 1.7 --source download
 ```
 
-Stack фиксирует exact commit SHA управляемых проектов и не принимает meta-bundle другой версии Astra под переименованным именем. Подробно: [`project-control/docs/STACK.md`](project-control/docs/STACK.md).
+Подробно: [`project-control/docs/STACK.md`](project-control/docs/STACK.md).
 
 ## Управляемые проекты
 
@@ -145,7 +150,7 @@ Stack фиксирует exact commit SHA управляемых проекто�
 |---|---|---|---|
 | Оформлятор | [`f2re/docomator`](https://github.com/f2re/docomator) | `docomator-v1` | `docomator-offline-v2` |
 | Борис по парам | [`f2re/planer-solving`](https://github.com/f2re/planer-solving) | `planer-solving-v1` | `planner-solving-offline-v3` |
-| Кафедра Planner | [`f2re/kafedra-planner`](https://github.com/f2re/kafedra-planner) | `kafedra-planner-v1` | `kafedra-full-airgap-v2` |
+| Кафедра Planner | [`f2re/kafedra-planner`](https://github.com/f2re/kafedra-planner) | `kafedra-planner-v1` | `kafedra-full-airgap-v2` / `kafedra-runtime-offline-v1` |
 
 Exact `verifiedCommit`, CI artifact names и deployment contract находятся в [`project-control/config/managed-projects.json`](project-control/config/managed-projects.json).
 
