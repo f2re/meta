@@ -3,11 +3,17 @@ name: Project Control CI
 on:
   pull_request:
     paths:
+      - "README.md"
+      - ".gitignore"
+      - "legacy/**"
       - "project-control/**"
       - ".github/workflows/project-control.yml"
   push:
     branches: [main]
     paths:
+      - "README.md"
+      - ".gitignore"
+      - "legacy/**"
       - "project-control/**"
       - ".github/workflows/project-control.yml"
 
@@ -16,9 +22,9 @@ permissions:
 
 jobs:
   test:
-    name: Contract, security and offline bundle
+    name: Contract, Astra deployment and meta-bundle
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: project-control
@@ -33,7 +39,7 @@ jobs:
         with:
           python-version: "3.8"
 
-      - name: Node and Python tests
+      - name: Node, Python and compatibility tests
         run: npm run check
 
       - name: Python syntax
@@ -46,28 +52,87 @@ jobs:
             bash -n "$script"
           done < <(find deploy scripts -type f -name '*.sh' -print0)
 
-      - name: Build offline controller bundle
+      - name: Prepare portable Node.js runtime
+        id: runtime
+        shell: bash
         run: |
           set -Eeuo pipefail
           NODE_BIN="$(readlink -f "$(command -v node)")"
           NODE_HOME="$(cd "$(dirname "$NODE_BIN")/.." && pwd -P)"
           test -f "$NODE_HOME/LICENSE"
           RUNTIME="$RUNNER_TEMP/project-control-node"
-          DIST="$RUNNER_TEMP/project-control-dist"
-          mkdir -p "$RUNTIME/bin" "$DIST"
+          mkdir -p "$RUNTIME/bin"
           cp "$NODE_BIN" "$RUNTIME/bin/node"
           cp "$NODE_HOME/LICENSE" "$RUNTIME/LICENSE"
-          OUT_DIR="$DIST" NODE_RUNTIME_DIR="$RUNTIME" ./scripts/build-offline-bundle.sh
+          echo "path=$RUNTIME" >> "$GITHUB_OUTPUT"
+
+      - name: Build offline controller bundle
+        env:
+          NODE_RUNTIME_DIR: ${{ steps.runtime.outputs.path }}
+        run: |
+          set -Eeuo pipefail
+          DIST="$RUNNER_TEMP/project-control-dist"
+          mkdir -p "$DIST"
+          OUT_DIR="$DIST" ./scripts/build-offline-bundle.sh
           cd "$DIST"
           sha256sum -c --strict project-control-*.tar.gz.sha256
           test -x install-project-control.sh
           tar -tzf project-control-*.tar.gz > bundle-files.txt
-          grep -q '/manifest.sha256$' bundle-files.txt
+          grep -F '/manifest.sha256' bundle-files.txt >/dev/null
 
-      - name: Upload offline controller bundle
+      - name: Build and verify Astra Linux meta-bundle
+        env:
+          NODE_RUNTIME_DIR: ${{ steps.runtime.outputs.path }}
+          TARGET_ASTRA_VERSION: "1.8"
+        run: |
+          set -Eeuo pipefail
+          DIST="$RUNNER_TEMP/meta-dist"
+          mkdir -p "$DIST"
+          OUT_DIR="$DIST" ./scripts/build-meta-bundle.sh
+          cd "$DIST"
+          sha256sum -c --strict f2re-meta-*.tar.gz.sha256
+          EXTRACT="$RUNNER_TEMP/meta-extracted"
+          mkdir -p "$EXTRACT"
+          tar -xzf f2re-meta-*.tar.gz -C "$EXTRACT"
+          META_ROOT="$(find "$EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$META_ROOT"
+          "$META_ROOT/verify.sh"
+
+      - name: Pull official Astra Linux 1.8 UBI
+        run: docker pull registry.astralinux.ru/library/astra/ubi18-python311:latest
+
+      - name: Install and start bundle in Astra Linux 1.8 userspace
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            -v "$RUNNER_TEMP/meta-dist:/dist:ro" \
+            -v "$GITHUB_WORKSPACE/project-control/scripts/ci-install-smoke.sh:/ci-install-smoke.sh:ro" \
+            registry.astralinux.ru/library/astra/ubi18-python311:latest \
+            /bin/bash -lc '
+              set -Eeuo pipefail
+              cd /dist
+              sha256sum -c --strict f2re-meta-*.tar.gz.sha256
+              mkdir -p /tmp/f2re-meta
+              tar -xzf f2re-meta-*.tar.gz -C /tmp/f2re-meta
+              META_ROOT="$(find /tmp/f2re-meta -mindepth 1 -maxdepth 1 -type d -print -quit)"
+              /ci-install-smoke.sh "$META_ROOT"
+            '
+
+      - name: Upload low-level controller bundle
         uses: actions/upload-artifact@v4
         with:
           name: project-control-offline-linux-x64
           path: ${{ runner.temp }}/project-control-dist/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Astra Linux meta-bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: f2re-meta-astra-1.8-amd64
+          path: |
+            ${{ runner.temp }}/meta-dist/f2re-meta-*.tar.gz
+            ${{ runner.temp }}/meta-dist/f2re-meta-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30

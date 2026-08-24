@@ -1,49 +1,87 @@
 # F2RE Project Control
 
-Локальный сервис единого мониторинга, перезапуска и offline-обновления `docomator`, `planer-solving` и `kafedra-planner` на Astra Linux/Debian.
+Project Control — локальный сервис единого мониторинга, перезапуска и офлайн-обновления приложений F2RE на Astra Linux/Debian. Целевой эксплуатационный профиль meta-bundle — **Astra Linux Special Edition 1.8, amd64**.
 
-Основной сценарий: открыть одну локальную страницу, увидеть фактически активные версии и состояние systemd/health-check, выбрать проект и перетащить подготовленный `*.f2re.zip`. Контроллер проверяет identity package, SHA-256, соответствие allowlisted adapter, распаковывает native bundle в изолированный staging и вызывает штатный installer конкретного проекта. Миграции, backup и rollback не дублируются: за них отвечает существующая транзакция проекта.
+Поддерживаются три явно allowlisted проекта: `docomator`, `planer-solving`, `kafedra-planner`. Их репозитории, проверенные commit SHA, adapter ID, native formats, пути, службы и health endpoints зафиксированы в `config/managed-projects.json` и проверяются CI против `src/adapters.mjs`.
 
-Уже существующие установки подключаются без переустановки. Версия читается из штатного `/opt/<service>/current/VERSION`; до первой операции через Project Control время последнего обновления определяется по времени атомарного переключения `current`, затем используется собственная история контроллера.
+## Операторский сценарий
+
+1. Установить Project Control из `f2re-meta-<version>-astra-1.8-amd64.tar.gz`.
+2. Открыть `http://<IP>:9090/` и ввести ключ доступа, созданный при первой установке.
+3. Получить готовый `*-project-control.f2re.zip` из успешного CI нужного приложения.
+4. Перетащить ZIP на карточку проекта.
+5. Контроллер проверит identity, SHA-256, adapter и, если включено, Ed25519-подпись; затем вызовет только штатный allowlisted installer приложения.
+6. Операция считается успешной только после совпадения активной версии и успешных systemd/HTTP health-check.
+
+Уже существующие установки подключаются без переустановки. Версия читается из штатного `/opt/<service>/current/VERSION`; после первого управляемого обновления Project Control ведёт собственную историю операций.
 
 ## Граница привилегий
 
-`project-control.service` работает от непривилегированного пользователя `project-control`. Root-операции вынесены в `project-control-executor.service` и доступны только через локальный Unix socket. Bundle никогда не передаёт контроллеру произвольную команду: для каждого `projectId` команда установки и список systemd-служб зашиты в статический allowlist `src/adapters.mjs`.
+`project-control.service` работает от непривилегированного пользователя `project-control`. Root-операции вынесены в `project-control-executor.service` и доступны только через локальный Unix socket. Загруженный bundle не может задавать shell-команду или systemd unit: executable contract находится только в `src/adapters.mjs`.
 
-Ключ веб-доступа является административным секретом: его владелец может инициировать root-обновление управляемых приложений. При первой установке ключ генерируется в `/root/project-control-access.txt`.
+Ключ веб-доступа является административным секретом и при первой установке сохраняется в `/root/project-control-access.txt`.
 
-Для среды, где release package должны быть аутентифицированы криптографически, включите `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` и разместите доверенные Ed25519 public keys в `/etc/project-control/trusted-keys/<keyId>.pem`. Формат и подпись описаны в `docs/STANDARD.md`.
+Для обязательной криптографической аутентификации release package установите `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` и доверенные Ed25519 public keys в `/etc/project-control/trusted-keys/<keyId>.pem`.
 
-## Offline bundle Project Control
+## Сборка low-level controller bundle
 
-На подключённой Linux build-машине с автономным Node.js runtime:
+На Linux build-машине с автономным Node.js runtime:
 
 ```bash
 NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 \
   ./scripts/build-offline-bundle.sh
 ```
 
-На целевую Astra переносятся три файла из `dist/`:
+Результат в `dist/`:
 
 ```text
-project-control-0.1.0-linux-x64.tar.gz
-project-control-0.1.0-linux-x64.tar.gz.sha256
+project-control-<version>-linux-x64.tar.gz
+project-control-<version>-linux-x64.tar.gz.sha256
 install-project-control.sh
 ```
 
-Установка/обновление самого контроллера:
+## Сборка Astra meta-bundle
+
+Meta-bundle — рекомендуемый переносимый артефакт для Astra Linux:
 
 ```bash
-sudo ./install-project-control.sh
-cat /root/project-control-access.txt
+NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 \
+TARGET_ASTRA_VERSION=1.8 \
+  ./scripts/build-meta-bundle.sh
 ```
 
-По умолчанию UI слушает `0.0.0.0:9090`. Порт/адрес и режим проверки подписей задаются в `/etc/project-control/project-control.env`.
+Результат:
 
-## Project packages
+```text
+f2re-meta-<version>-astra-1.8-amd64.tar.gz
+f2re-meta-<version>-astra-1.8-amd64.tar.gz.sha256
+```
 
-Каждый управляемый проект продолжает выпускать свой native offline archive. Дополнительно build pipeline создаёт ZIP-обёртку `*-project-control.f2re.zip`, в которой identity manifest связывает `projectId`, версию и SHA-256 native payload. Именно этот ZIP перетаскивается в UI.
+Внутри находятся controller archive, installer, `managed-projects.json`, `meta-release.json`, `verify.sh`, `SHA256SUMS` и краткая инструкция. Сами три приложения в meta-bundle не встраиваются: их `*.f2re.zip` выпускаются их собственным CI.
 
-Для размещения всех приложений на одном хосте заранее разведите API/LLM-порты. Рекомендуемый профиль и причины сохранения native defaults описаны в `docs/STANDARD.md`.
+## Установка на Astra Linux
 
-Подробности: `docs/STANDARD.md`.
+```bash
+sha256sum -c f2re-meta-*.tar.gz.sha256
+tar -xzf f2re-meta-*.tar.gz
+cd f2re-meta-*
+./verify.sh
+sudo ./install.sh
+curl -fsS http://127.0.0.1:9090/api/ping
+```
+
+По умолчанию UI слушает `0.0.0.0:9090`. Настройки находятся в `/etc/project-control/project-control.env`; данные и история — в `/var/lib/project-control`.
+
+## Проверки CI
+
+`npm run check` выполняет Node/Python тесты, syntax checks и сверку compatibility manifest с runtime adapter allowlist. GitHub Actions дополнительно:
+
+- собирает low-level offline controller bundle;
+- собирает и полностью проверяет Astra meta-bundle;
+- запускает deployment smoke в официальном Astra Linux 1.8 UBI userspace;
+- проходит установку, создание пользователя/конфигурации, запуск executor + web service и проверяет `/api/ping`;
+- публикует готовый `f2re-meta-astra-1.8-amd64` artifact.
+
+В UBI-контейнере systemd не является PID 1, поэтому CI подменяет только вызовы `systemctl`; реальные unit-файлы и пути установки остаются теми же. Полная эксплуатационная установка использует штатный systemd Astra Linux.
+
+Подробности: `docs/ASTRA_LINUX.md`, `docs/COMPATIBILITY.md`, `docs/STANDARD.md`.
