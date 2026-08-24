@@ -1,0 +1,305 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "project-control/VERSION"
+      - ".github/workflows/release.yml"
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release contract
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    defaults:
+      run:
+        working-directory: project-control
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Resolve SemVer
+        id: version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || { echo "VERSION is not SemVer: $VERSION" >&2; exit 2; }
+          test "$VERSION" = "$(node -p 'require("./package.json").version')"
+          test "$VERSION" = "$(awk -F= '$1=="PROJECT_CONTROL_VERSION"{print $2}' config/project-control.env.example)"
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$VERSION" || { echo "Tag $GITHUB_REF_NAME != v$VERSION" >&2; exit 2; }
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Release tests
+        run: npm run check
+
+      - name: Shell and Python syntax
+        run: |
+          while IFS= read -r -d '' script; do bash -n "$script"; done < <(find deploy scripts -type f -name '*.sh' -print0)
+          python3 -m py_compile src/package_tool.py scripts/package-release.py scripts/stack_tool.py scripts/apply-package.py
+
+  controller:
+    name: Build portable controller
+    needs: validate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: project-control
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Prepare portable Node.js runtime
+        id: runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          NODE_BIN="$(readlink -f "$(command -v node)")"
+          NODE_HOME="$(cd "$(dirname "$NODE_BIN")/.." && pwd -P)"
+          RUNTIME="$RUNNER_TEMP/node-runtime"
+          mkdir -p "$RUNTIME/bin"
+          cp "$NODE_BIN" "$RUNTIME/bin/node"
+          cp "$NODE_HOME/LICENSE" "$RUNTIME/LICENSE"
+          echo "path=$RUNTIME" >> "$GITHUB_OUTPUT"
+
+      - name: Build controller bundle
+        env:
+          NODE_RUNTIME_DIR: ${{ steps.runtime.outputs.path }}
+        run: |
+          set -Eeuo pipefail
+          OUT_DIR="$RUNNER_TEMP/controller" ./scripts/build-offline-bundle.sh
+          cd "$RUNNER_TEMP/controller"
+          sha256sum -c --strict project-control-*.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-controller
+          path: ${{ runner.temp }}/controller/*
+          if-no-files-found: error
+          retention-days: 7
+
+  astra:
+    name: Build Astra ${{ matrix.astra }} release
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - astra: "1.7"
+            image: registry.astralinux.ru/library/astra/ubi17:1.7.5
+          - astra: "1.8"
+            image: registry.astralinux.ru/library/astra/ubi18-python311:latest
+    defaults:
+      run:
+        working-directory: project-control
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Prepare portable Node.js runtime
+        id: runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          NODE_BIN="$(readlink -f "$(command -v node)")"
+          NODE_HOME="$(cd "$(dirname "$NODE_BIN")/.." && pwd -P)"
+          RUNTIME="$RUNNER_TEMP/node-runtime"
+          mkdir -p "$RUNTIME/bin"
+          cp "$NODE_BIN" "$RUNTIME/bin/node"
+          cp "$NODE_HOME/LICENSE" "$RUNTIME/LICENSE"
+          echo "path=$RUNTIME" >> "$GITHUB_OUTPUT"
+
+      - name: Build meta-bundle
+        env:
+          NODE_RUNTIME_DIR: ${{ steps.runtime.outputs.path }}
+          TARGET_ASTRA_VERSION: ${{ matrix.astra }}
+        run: |
+          set -Eeuo pipefail
+          OUT_DIR="$RUNNER_TEMP/astra-${{ matrix.astra }}" ./scripts/build-meta-bundle.sh
+          cd "$RUNNER_TEMP/astra-${{ matrix.astra }}"
+          sha256sum -c --strict f2re-meta-*.tar.gz.sha256
+
+      - name: Pull official Astra ${{ matrix.astra }} UBI
+        run: docker pull '${{ matrix.image }}'
+
+      - name: Deployment smoke on Astra ${{ matrix.astra }}
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            -v "$RUNNER_TEMP/astra-${{ matrix.astra }}:/dist:ro" \
+            -v "$GITHUB_WORKSPACE/project-control/scripts/ci-install-smoke.sh:/ci-install-smoke.sh:ro" \
+            '${{ matrix.image }}' \
+            /bin/bash -lc '
+              set -Eeuo pipefail
+              missing=0
+              for cmd in python3 useradd groupadd getent runuser sha256sum tar; do command -v "$cmd" >/dev/null 2>&1 || missing=1; done
+              if ((missing)); then
+                apt-get update >/dev/null
+                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 passwd util-linux coreutils tar >/dev/null
+              fi
+              cd /dist
+              sha256sum -c --strict f2re-meta-*.tar.gz.sha256
+              mkdir -p /tmp/meta
+              tar -xzf f2re-meta-*.tar.gz -C /tmp/meta
+              META_ROOT="$(find /tmp/meta -mindepth 1 -maxdepth 1 -type d -print -quit)"
+              /ci-install-smoke.sh "$META_ROOT" '${{ matrix.astra }}'
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-astra-${{ matrix.astra }}
+          path: |
+            ${{ runner.temp }}/astra-${{ matrix.astra }}/f2re-meta-*.tar.gz
+            ${{ runner.temp }}/astra-${{ matrix.astra }}/f2re-meta-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, controller, astra]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-input
+          merge-multiple: true
+
+      - name: Prepare immutable release assets
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p release-assets
+          find release-input -maxdepth 1 -type f -print
+          cp release-input/project-control-${VERSION}-linux-x64.tar.gz release-assets/
+          cp release-input/project-control-${VERSION}-linux-x64.tar.gz.sha256 release-assets/
+          cp release-input/install-project-control.sh release-assets/
+          for astra in 1.7 1.8; do
+            source="release-input/f2re-meta-${VERSION}-astra-${astra}-amd64.tar.gz"
+            test -f "$source"
+            cp "$source" release-assets/
+            cp "$source.sha256" release-assets/
+            cp "$source" "release-assets/f2re-meta-astra-${astra}-amd64.tar.gz"
+            (cd release-assets && sha256sum "f2re-meta-astra-${astra}-amd64.tar.gz" > "f2re-meta-astra-${astra}-amd64.tar.gz.sha256")
+          done
+          cp "release-assets/project-control-${VERSION}-linux-x64.tar.gz" release-assets/project-control-linux-x64.tar.gz
+          (cd release-assets && sha256sum project-control-linux-x64.tar.gz > project-control-linux-x64.tar.gz.sha256)
+
+          python3 - "$VERSION" "$GITHUB_SHA" release-assets <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          version, commit, root = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+          def digest(path):
+              h=hashlib.sha256()
+              with path.open('rb') as stream:
+                  for chunk in iter(lambda: stream.read(1024*1024), b''): h.update(chunk)
+              return h.hexdigest()
+          assets=[]
+          for path in sorted(p for p in root.iterdir() if p.is_file() and not p.name.endswith('.sha256')):
+              assets.append({'name':path.name,'bytes':path.stat().st_size,'sha256':digest(path)})
+          manifest={
+              'schema':'f2re-github-release/v1',
+              'version':version,
+              'tag':f'v{version}',
+              'sourceCommit':commit,
+              'targets':[{'os':'Astra Linux Special Edition','version':'1.7','arch':'amd64'}, {'os':'Astra Linux Special Edition','version':'1.8','arch':'amd64'}],
+              'assets':assets,
+          }
+          (root/'release-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+            zip -q "f2re-meta-${VERSION}-all-astra-amd64.zip" \
+              "f2re-meta-${VERSION}-astra-1.7-amd64.tar.gz" "f2re-meta-${VERSION}-astra-1.7-amd64.tar.gz.sha256" \
+              "f2re-meta-${VERSION}-astra-1.8-amd64.tar.gz" "f2re-meta-${VERSION}-astra-1.8-amd64.tar.gz.sha256" \
+              "project-control-${VERSION}-linux-x64.tar.gz" "project-control-${VERSION}-linux-x64.tar.gz.sha256" \
+              install-project-control.sh release-manifest.json SHA256SUMS
+            sha256sum "f2re-meta-${VERSION}-all-astra-amd64.zip" > "f2re-meta-${VERSION}-all-astra-amd64.zip.sha256"
+          )
+
+      - name: Build release notes from CHANGELOG
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python3 - "$VERSION" CHANGELOG.md > RELEASE_NOTES.md <<'PY'
+          import re,sys
+          version=sys.argv[1]
+          text=open(sys.argv[2],encoding='utf-8').read()
+          pattern=rf'^## \[{re.escape(version)}\].*?$'
+          match=re.search(pattern,text,re.M)
+          if not match:
+              raise SystemExit(f'CHANGELOG section [{version}] not found')
+          tail=text[match.start():]
+          next_match=re.search(r'^## \[',tail[match.end()-match.start():],re.M)
+          if next_match:
+              body=tail[:match.end()-match.start()+next_match.start()]
+          else:
+              body=tail
+          print(body.strip())
+          print('\n### Проверенные платформы\n')
+          print('- Astra Linux Special Edition 1.7, amd64')
+          print('- Astra Linux Special Edition 1.8, amd64')
+          print('\nВсе бинарные assets сопровождаются SHA-256; полный inventory находится в `release-manifest.json` и `SHA256SUMS`.')
+          PY
+
+      - name: Publish release once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; immutable release is left unchanged."
+            exit 0
+          fi
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            target="$(git rev-list -n 1 "$TAG")"
+            test "$target" = "$GITHUB_SHA" || { echo "Existing tag $TAG points to $target, expected $GITHUB_SHA" >&2; exit 3; }
+            gh release create "$TAG" --verify-tag --title "F2RE Meta $TAG" --notes-file RELEASE_NOTES.md release-assets/*
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "F2RE Meta $TAG" --notes-file RELEASE_NOTES.md release-assets/*
+          fi
