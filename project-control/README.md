@@ -68,18 +68,18 @@ git pull --ff-only
 ./project-control/scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
-По умолчанию это `--source build --refs latest`. Сначала скрипт выполняет `git ls-remote` для `defaultBranch` каждого проекта, фиксирует полученные SHA в `stack-inputs-<astra>/managed-projects.resolved.json`, а уже затем строит весь комплект. Таким образом, если `docomator/main` уже содержит 0.6.4, stack собирает именно этот commit, даже если сохранённый compatibility snapshot в `meta` был создан раньше.
+По умолчанию это `--source build --refs latest`. Сначала скрипт выполняет `git ls-remote` для `defaultBranch` каждого проекта, фиксирует полученные SHA в `stack-inputs-<astra>/managed-projects.resolved.json`, а уже затем строит весь комплект. Поэтому новая версия в `docomator/main`, `planer-solving/main` или `kafedra-planner/main` попадает в следующий обычный stack без ручного редактирования `verifiedCommit` в `meta`.
 
-Перед тяжёлой сборкой выводятся разрешённые SHA. Сразу после checkout каждого проекта выводятся фактические `VERSION` и commit, например:
+Перед тяжёлой сборкой выводятся разрешённые SHA. Сразу после checkout каждого проекта выводятся фактические `VERSION` и commit:
 
 ```text
 ==> Проекты: определяем актуальные HEAD defaultBranch
-    docomator          main @ 3a3898c9...
-    planer-solving     main @ 15e6b943...
-    kafedra-planner    main @ 3fb241dd...
+    docomator          main @ <resolved SHA>
+    planer-solving     main @ <resolved SHA>
+    kafedra-planner    main @ <resolved SHA>
 ...
-==> docomator: локальная сборка 3a3898c9...
-    docomator: версия 0.6.4, commit 3a3898c9...
+==> docomator: локальная сборка <resolved SHA>
+    docomator: версия <VERSION из main>, commit <resolved SHA>
 ```
 
 Снимок разрешённых SHA используется единообразно: для clone, wrapper `sourceCommit`, проверки stack, `meta/managed-projects.json` и `config/managed-projects.json` внутри собираемого Project Control. Поэтому контроллер и приложения не могут незаметно разъехаться по версиям.
