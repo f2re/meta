@@ -66,9 +66,11 @@ json_projects() {
   python3 - "$MANAGED" <<'PY'
 import json,sys
 m=json.load(open(sys.argv[1],encoding='utf-8'))
+prefix='https://github.com/'
 for p in m['projects']:
-    release=p['release']
-    print('\t'.join((p['projectId'],p['repository'].removeprefix('https://github.com/'),p['verifiedCommit'],release.get('actionsArtifact',''))))
+    release=p['release']; repository=p['repository']
+    repo=repository[len(prefix):] if repository.startswith(prefix) else repository
+    print('\t'.join((p['projectId'],repo,p['verifiedCommit'],release.get('actionsArtifact',''))))
 PY
 }
 
@@ -159,19 +161,27 @@ build_planer() {
 }
 
 build_kafedra() {
-  local repo="$1" commit="$2" dest="$3" src="$WORK_DIR/src-kafedra"
+  local repo="$1" commit="$2" dest="$3" src="$WORK_DIR/src-kafedra" archive
   command -v docker >/dev/null 2>&1 || { echo "Для локальной full offline сборки kafedra-planner нужен Docker." >&2; return 2; }
   echo "==> kafedra-planner: локальная Debian 12 сборка $commit"
   clone_exact "$repo" "$commit" "$src"
   mkdir -p "$dest"
-  docker run --rm -v "$src:/src:ro" -v "$dest:/out" node:24-bookworm bash -lc '
+  docker run --rm -e GITHUB_SHA="$commit" -v "$src:/src:ro" -v "$dest:/out" node:24-bookworm bash -lc '
     set -Eeuo pipefail
     apt-get update >/dev/null
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 ca-certificates curl xz-utils binutils systemd >/dev/null
     cd /src
-    OUT_DIR=/out KAFEDRA_FULL_BUNDLE_CACHE_DIR=/tmp/kafedra-cache PROJECT_CONTROL_PYTHON_BIN=python3 \
-      bash scripts/offline/build-project-control-bundle.sh >/dev/null
+    OUT_DIR=/out KAFEDRA_FULL_BUNDLE_CACHE_DIR=/tmp/kafedra-cache bash scripts/offline/build-full-bundle.sh >/dev/null
   '
+  archive="$(find "$dest" -maxdepth 1 -type f -name 'kafedra-planner-*.tar.gz' ! -name '*-llm.tar.gz' -print -quit)"
+  [[ -n "$archive" && -f "$archive" && -f "$archive.sha256" ]] || { echo "Kafedra full bundle не создан" >&2; return 3; }
+  args=(
+    --archive "$archive" --output "$dest" --project-id kafedra-planner --display-name "Кафедра Planner"
+    --adapter kafedra-planner-v1 --version "$(tr -d '[:space:]' < "$src/VERSION")"
+    --source-commit "$commit" --native-format kafedra-full-airgap-v2
+  )
+  [[ -z "${F2RE_RELEASE_SIGNING_KEY:-}" ]] || args+=(--signing-key "$F2RE_RELEASE_SIGNING_KEY")
+  python3 "$src/scripts/offline/project-control-package.py" "${args[@]}" >/dev/null
 }
 
 build_project() {
