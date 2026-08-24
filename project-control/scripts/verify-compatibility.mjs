@@ -25,6 +25,7 @@ if (!Array.isArray(manifest.projects)) fail("projects должен быть ма
 const ids = Object.keys(ADAPTERS).sort();
 const listed = manifest.projects.map((p) => p.projectId).sort();
 same(listed, ids, "список projectId");
+const formatPattern = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
 for (const project of manifest.projects) {
   const adapter = ADAPTERS[project.projectId];
@@ -32,7 +33,13 @@ for (const project of manifest.projects) {
   if (!/^https:\/\/github\.com\/f2re\/[A-Za-z0-9._-]+$/.test(project.repository || "")) fail(`${project.projectId}: repository`);
   if (project.defaultBranch !== "main") fail(`${project.projectId}: defaultBranch должен быть main`);
   if (!/^[0-9a-f]{40}$/.test(project.verifiedCommit || "")) fail(`${project.projectId}: verifiedCommit должен быть полным SHA`);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(project.nativeBundleFormat || "")) fail(`${project.projectId}: nativeBundleFormat`);
+  if (!formatPattern.test(project.nativeBundleFormat || "")) fail(`${project.projectId}: nativeBundleFormat`);
+  const nativeFormats = project.nativeBundleFormats ?? [project.nativeBundleFormat];
+  if (!Array.isArray(nativeFormats) || nativeFormats.length < 1 || nativeFormats.some((value) => !formatPattern.test(value || ""))) {
+    fail(`${project.projectId}: nativeBundleFormats`);
+  }
+  if (!nativeFormats.includes(project.nativeBundleFormat)) fail(`${project.projectId}: nativeBundleFormats должен включать основной nativeBundleFormat`);
+  if (new Set(nativeFormats).size !== nativeFormats.length) fail(`${project.projectId}: nativeBundleFormats содержит повторы`);
   if (!project.release || project.release.ci !== "github-actions" || !project.release.artifactPattern?.endsWith("-project-control.f2re.zip")) {
     fail(`${project.projectId}: release contract`);
   }
