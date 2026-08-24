@@ -108,20 +108,33 @@ flowchart LR
     R --> D[Stable latest downloads]
 ```
 
-Официальная Astra Linux UBI документация поддерживает отдельные `ubi17` и `ubi18` container families; Project Control проверяется в обеих ветках до публикации release. 
+Официальная Astra Linux UBI документация поддерживает отдельные `ubi17` и `ubi18` container families; Project Control проверяется в обеих ветках до публикации release.
 
 ## F2RE Stack — вся система одним махом
 
-На Linux build-машине:
+На Linux build-машине с интернетом:
 
 ```bash
 git clone https://github.com/f2re/meta.git
-cd meta/project-control
+cd meta
+git pull --ff-only
+git rev-parse HEAD
+cd project-control
 gh auth login
 
 ./scripts/f2re-stack.sh prepare --astra 1.7
 # или
 ./scripts/f2re-stack.sh prepare --astra 1.8
+```
+
+`prepare` работает от **exact SHA локального checkout**. Если в диагностике скрипта отображается старый commit, сначала выполните `git pull --ff-only`: скрипт специально не заменяет исходники более новым `main` скрытно.
+
+В `auto`-режиме сначала ищутся CI artifacts exact-SHA. Отсутствующий artifact пересобирается локально. Системный Node.js не требуется: официальный standalone Node.js 24 автоматически загружается, проверяется по `SHASUMS256.txt` и передаётся builder-ам явно. Для fallback отдельных подпроектов могут понадобиться `curl`, `xz`, `python3-venv` и Docker.
+
+Если fallback build недопустим и нужны только готовые проверенные artifacts:
+
+```bash
+./scripts/f2re-stack.sh prepare --astra 1.7 --source download
 ```
 
 Stack фиксирует exact commit SHA управляемых проектов и не принимает meta-bundle другой версии Astra под переименованным именем. Подробно: [`project-control/docs/STACK.md`](project-control/docs/STACK.md).
