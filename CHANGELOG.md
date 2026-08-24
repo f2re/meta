@@ -29,7 +29,7 @@
 - Версия одновременно проверяется в `VERSION`, `package.json` и `project-control.env.example`.
 - Каждый бинарный asset получает SHA-256; состав релиза фиксируется в machine-readable manifest.
 
-## [0.4.0] - 2026-08-24
+## 0.4.0 - 2026-08-24
 
 ### Added
 
@@ -43,7 +43,7 @@
 - Загрузка frontend assets/API за reverse proxy.
 - Обновления, обрывавшиеся из-за `client_max_body_size` и `proxy_read_timeout`.
 
-## [0.3.0] - 2026-08-24
+## 0.3.0 - 2026-08-24
 
 ### Added
 
@@ -52,4 +52,3 @@
 - Astra Linux meta-bundle и deployment smoke.
 
 [0.5.0]: https://github.com/f2re/meta/releases/tag/v0.5.0
-[0.4.0]: https://github.com/f2re/meta/compare/v0.4.0...v0.5.0
