@@ -1,6 +1,6 @@
 # F2RE Stack: один архив для всей системы
 
-`F2RE Stack` объединяет Project Control и все управляемые приложения в один переносимый offline archive для Astra Linux 1.8 amd64.
+`F2RE Stack` объединяет Project Control и все управляемые приложения в один переносимый offline archive. Target выбирается явно: **Astra Linux 1.7** или **Astra Linux 1.8**, amd64.
 
 ## Самый простой сценарий
 
@@ -10,27 +10,32 @@
 git clone https://github.com/f2re/meta.git
 cd meta/project-control
 gh auth login
-./scripts/f2re-stack.sh prepare
+
+./scripts/f2re-stack.sh prepare --astra 1.7
+# или
+./scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
 `prepare` работает в режиме `auto`:
 
 1. читает `config/managed-projects.json`;
-2. для `meta`, `docomator`, `planer-solving` и `kafedra-planner` ищет GitHub Actions artifact **точно закреплённого commit SHA**;
-3. проверяет source commit, adapter, native bundle format, wrapper SHA-256 и SHA/size native payload;
-4. если конкретного CI artifact ещё нет, только этот компонент пересобирается локально штатным builder соответствующего проекта;
-5. всё упаковывается в один архив.
+2. ищет Project Control meta artifact **именно выбранной Astra** и artifacts закреплённых commit SHA подпроектов;
+3. проверяет source commit, adapter, native bundle format, wrapper SHA-256 и SHA/size payload;
+4. если конкретного CI artifact нет, пересобирает только этот компонент;
+5. проверяет, что `meta-release.json.target.version` совпадает с `--astra`;
+6. формирует один переносимый архив.
 
 Результат:
 
 ```text
-dist/f2re-stack-0.3.0-astra-1.8-amd64.tar.gz
-dist/f2re-stack-0.3.0-astra-1.8-amd64.tar.gz.sha256
+dist/f2re-stack-<version>-astra-1.7-amd64.tar.gz
+# или
+dist/f2re-stack-<version>-astra-1.8-amd64.tar.gz
 ```
 
-Перенесите только эти два файла в закрытый контур.
+Простое переименование bundle 1.8 в 1.7 не работает: `stack_tool.py` проверяет target metadata и отклоняет несовпадение.
 
-На Astra Linux:
+## Развёртывание
 
 ```bash
 sha256sum -c f2re-stack-*.tar.gz.sha256
@@ -41,21 +46,19 @@ sudo ./deploy-stack.sh
 
 Это последовательно:
 
-1. проверит общий `SHA256SUMS` и identity всех вложенных release;
-2. установит/обновит Project Control;
-3. дождётся `/api/ping`;
-4. возьмёт локальный access token из `/etc/project-control/project-control.env`;
-5. потоково загрузит `docomator` через штатный `/api/projects/docomator/update`;
-6. дождётся точной активной версии и зелёного health;
-7. аналогично обновит `planer-solving`;
-8. для **первой** установки `kafedra-planner` автоматически подготовит штатный env-шаблон с непересекающимися портами, затем обновит его через Project Control;
-9. выведет итоговое состояние всех трёх сервисов.
+1. проверяет общий `SHA256SUMS` и identity вложенных release;
+2. устанавливает/обновляет Project Control;
+3. ждёт `/api/ping`;
+4. получает локальный access token из `/etc/project-control/project-control.env`;
+5. загружает `docomator` через штатный Project Control API;
+6. требует точную активную версию и зелёный health;
+7. аналогично обновляет `planer-solving`;
+8. для первой установки `kafedra-planner` готовит непересекающийся co-location profile;
+9. выводит итоговое состояние сервисов.
 
-При ошибке выполнение останавливается. Rollback конкретного приложения остаётся ответственностью его native installer, как и при обычном обновлении через UI Project Control.
+При ошибке выполнение останавливается. Rollback приложения остаётся ответственностью его native installer.
 
 ## Совместная установка на одном хосте
-
-One-shot использует стабильный профиль:
 
 ```text
 planer-solving API       8001
@@ -66,11 +69,9 @@ kafedra-planner LLM      8091
 project-control          9090
 ```
 
-У `docomator` и `kafedra-planner` native API default равен `8080`, поэтому чистая установка без разведения портов конфликтовала бы. `deploy-stack.sh` решает это только для **новой** Kafedra Planner: из проверенного native bundle извлекается его собственный `application/.env.example`, в копии меняются только `KAFEDRA_PORT`, `KAFEDRA_LLM_ENDPOINT` и `KAFEDRA_LLM_PORT`, после чего штатный installer использует этот постоянный env. Если `/etc/kafedra-planner/kafedra-planner.env` уже существует, он не изменяется.
+Если `/etc/kafedra-planner/kafedra-planner.env` уже существует, one-shot его не переписывает.
 
-При ошибке первой установки временно подготовленный env удаляется. После успешной установки права приводятся к `root:kafedra-planner 0640`.
-
-При необходимости свежие порты можно переопределить:
+Порты новой Kafedra можно переопределить:
 
 ```bash
 sudo F2RE_KAFEDRA_PORT=18090 F2RE_KAFEDRA_LLM_PORT=18091 ./deploy-stack.sh
@@ -78,52 +79,52 @@ sudo F2RE_KAFEDRA_PORT=18090 F2RE_KAFEDRA_LLM_PORT=18091 ./deploy-stack.sh
 
 ## Режимы получения артефактов
 
-Только скачать уже проверенные CI release:
+Только скачать проверенные CI artifacts:
 
 ```bash
-./scripts/f2re-stack.sh download
-./scripts/f2re-stack.sh pack
+./scripts/f2re-stack.sh download --astra 1.7
+./scripts/f2re-stack.sh pack --astra 1.7
 ```
 
-Если точного artifact закреплённого SHA нет, `download` завершится ошибкой и ничего не подменит более новым release.
+Если exact-SHA artifact отсутствует, `download` завершается ошибкой и не подменяет его более новым release.
 
-Принудительно пересобрать всё из исходников закреплённых commit:
+Принудительная пересборка:
 
 ```bash
-./scripts/f2re-stack.sh build
-./scripts/f2re-stack.sh pack
+./scripts/f2re-stack.sh prepare --astra 1.8 --source build
 ```
 
-Или одной командой:
+Поддерживаемые варианты:
 
 ```bash
-./scripts/f2re-stack.sh prepare --source build
+./scripts/f2re-stack.sh prepare --astra 1.7 --source auto
+./scripts/f2re-stack.sh prepare --astra 1.8 --source auto
+./scripts/f2re-stack.sh prepare --astra 1.7 --source download
+./scripts/f2re-stack.sh prepare --astra 1.8 --source download
+./scripts/f2re-stack.sh prepare --astra 1.7 --source build
+./scripts/f2re-stack.sh prepare --astra 1.8 --source build
 ```
 
-Локальная пересборка использует штатные builders:
+## Builders
 
-- `meta`: `scripts/build-meta-bundle.sh`;
+- `meta`: `scripts/build-meta-bundle.sh` с `TARGET_ASTRA_VERSION`;
 - `docomator`: `scripts/project-control/build-bundle.sh`;
 - `planer-solving`: `offline/build_project_control_bundle.sh`;
-- `kafedra-planner`: native full air-gap archive собирается `scripts/offline/build-full-bundle.sh` внутри Debian 12 container, а Project Control wrapper создаётся на host штатным `project-control-package.py` с **явно переданным pinned SHA**.
+- `kafedra-planner`: native full air-gap archive через его штатный builder, wrapper — через `project-control-package.py` с pinned SHA.
 
-Для `meta`/`docomator` автоматически скачивается официальный standalone Node.js `24.15.0` и проверяется по `SHASUMS256.txt`, если `NODE_RUNTIME_DIR` не задан. Для полной локальной сборки `kafedra-planner` нужен Docker.
+Для `meta`/`docomator` автоматически загружается официальный standalone Node.js и проверяется по `SHASUMS256.txt`, если `NODE_RUNTIME_DIR` не задан. Для полной локальной сборки `kafedra-planner` нужен Docker.
 
 ## Требования к online build/download машине
 
-Для обычного `prepare` достаточно:
+Для обычного `prepare`:
 
 - Linux x86-64;
 - `git`, `python3`, `tar`, `gzip`, `sha256sum`;
-- `gh` с выполненным `gh auth login` для скачивания Actions artifacts.
+- `gh` с `gh auth login`.
 
-Если какого-то artifact нет и потребуется fallback build, дополнительно могут понадобиться `curl`, `xz`, `python3-venv` и Docker. Чтобы запретить fallback и только скачивать проверенные CI artifacts, используйте:
+Для fallback build дополнительно могут понадобиться `curl`, `xz`, `python3-venv`, Docker.
 
-```bash
-./scripts/f2re-stack.sh prepare --source download
-```
-
-## Что лежит внутри общего stack
+## Состав stack
 
 ```text
 f2re-stack-.../
@@ -145,43 +146,33 @@ f2re-stack-.../
     └── kafedra-planner-...project-control.f2re.zip.sha256
 ```
 
-`stack-release.json` фиксирует версии и SHA всех четырёх компонентов. Поэтому один перенесённый архив является воспроизводимым deployment set, а не набором случайных «последних» файлов.
+`stack-release.json` фиксирует target Astra, версии и SHA компонентов. Один архив является воспроизводимым deployment set, а не набором случайных «последних» файлов.
 
 ## Полезные варианты deploy
 
-Только проверить, ничего не меняя:
-
 ```bash
+# Только проверить
 sudo ./deploy-stack.sh --dry-run
-```
 
-Project Control уже установлен, обновить только приложения:
-
-```bash
+# Project Control уже установлен — только приложения
 sudo ./deploy-stack.sh --skip-meta
-```
 
-Обновить один проект из stack:
-
-```bash
+# Только один проект
 sudo ./deploy-stack.sh --skip-meta --project docomator
-```
 
-Использовать Project Control на другом локальном URL:
-
-```bash
+# Другой локальный URL контроллера
 sudo ./deploy-stack.sh --url http://127.0.0.1:19090
 ```
 
 ## Почему deploy идёт через Project Control API
 
-Общий installer намеренно не запускает native `install.sh` подпроектов напрямую. Он передаёт тот же `*.f2re.zip`, который оператор загрузил бы в UI. Поэтому сохраняются:
+Stack не запускает native installers подпроектов напрямую. Он передаёт тот же `*.f2re.zip`, что UI, сохраняя:
 
-- статический allowlist adapter;
-- проверка wrapper и payload;
-- политика Ed25519-подписей;
+- статический adapter allowlist;
+- проверку wrapper/payload;
+- Ed25519 policy;
 - staging;
 - native verify entrypoint;
-- штатный backup/migration/rollback проекта;
-- проверка активной версии, systemd и HTTP health;
-- единая история операций Project Control.
+- штатный backup/migration/rollback;
+- проверку версии, systemd и HTTP health;
+- единую историю операций.
