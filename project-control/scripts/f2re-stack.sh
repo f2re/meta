@@ -16,14 +16,23 @@ KEEP_WORK=false
 NODE_VERSION="${F2RE_NODE_VERSION:-24.19.0}"
 NODE_RUNTIME_RESOLVED=""
 BUILD_PYTHON_RESOLVED=""
+DEFAULT_CACHE_BASE="${XDG_CACHE_HOME:-}"
+if [[ -z "$DEFAULT_CACHE_BASE" ]]; then
+  if [[ -n "${HOME:-}" ]]; then DEFAULT_CACHE_BASE="$HOME/.cache"; else DEFAULT_CACHE_BASE="$ROOT/.cache"; fi
+fi
+CACHE_DIR="${F2RE_STACK_CACHE_DIR:-$DEFAULT_CACHE_BASE/f2re-stack}"
+CACHE_ENABLED=true
+NPM_CACHE=""
+PIP_CACHE=""
+KAFEDRA_CACHE=""
 
 usage() {
   cat <<'EOF'
 F2RE Stack — локальная сборка всех offline bundle одной командой.
 
-  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--refs latest|pinned] [--source build|auto|download] [--output DIR]
+  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--refs latest|pinned] [--source build|auto|download] [--output DIR] [--cache-dir DIR|--no-cache]
   ./scripts/f2re-stack.sh download [--astra 1.7|1.8] [--refs pinned] [--output DIR]
-  ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--refs latest|pinned] [--output DIR]
+  ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--refs latest|pinned] [--output DIR] [--cache-dir DIR|--no-cache]
   ./scripts/f2re-stack.sh pack [--astra 1.7|1.8] [--input DIR] [--output DIR]
 
 prepare (по умолчанию) = build + latest: перед сборкой читает defaultBranch каждого
@@ -36,14 +45,21 @@ prepare (по умолчанию) = build + latest: перед сборкой ч
 для уже разрешённых SHA и локально собирает отсутствующие компоненты.
 Docker не используется и не требуется.
 
+Инструменты и package-manager downloads кешируются между запусками. По умолчанию
+кеш находится в $XDG_CACHE_HOME/f2re-stack либо ~/.cache/f2re-stack. В нём
+сохраняются проверенный standalone Node.js, npm cache, pip cache и runtime cache
+Kafedra. --no-cache включает прежний одноразовый режим; --cache-dir задаёт путь.
+
 Системный Node.js не требуется: официальный standalone Node.js автоматически
-скачивается и проверяется по SHASUMS256.txt. Для planer-solving нужен Python
-3.11+; скрипт сам выбирает подходящий интерпретатор, предпочитая /usr/bin/python3.
+скачивается только при отсутствии корректной копии в кеше и проверяется по
+SHASUMS256.txt. Для planer-solving нужен Python 3.11+; сам Python не скачивается —
+скрипт выбирает уже установленный интерпретатор, а загружаемые pip-пакеты кеширует.
 
 Переменные:
   F2RE_TARGET_ASTRA_VERSION целевая Astra Linux (1.7 или 1.8; default 1.8)
   F2RE_STACK_SOURCE_MODE    build (default), auto или download
   F2RE_PROJECT_REF_MODE     latest (default) или pinned
+  F2RE_STACK_CACHE_DIR      постоянный кеш инструментов и зависимостей
   NODE_RUNTIME_DIR          готовый автономный Linux Node.js runtime
   F2RE_NODE_VERSION         версия Node для автозагрузки (24.19.0)
   F2RE_PYTHON_BIN           Python 3.11+ для сборки planer-solving
@@ -59,6 +75,8 @@ while [[ $# -gt 0 ]]; do
     --output) [[ $# -ge 2 ]] || { echo "--output требует DIR" >&2; exit 2; }; OUT_DIR="$2"; shift 2 ;;
     --input) [[ $# -ge 2 ]] || { echo "--input требует DIR" >&2; exit 2; }; INPUT_DIR="$2"; shift 2 ;;
     --work-dir) [[ $# -ge 2 ]] || { echo "--work-dir требует DIR" >&2; exit 2; }; WORK_DIR="$2"; shift 2 ;;
+    --cache-dir) [[ $# -ge 2 ]] || { echo "--cache-dir требует DIR" >&2; exit 2; }; CACHE_DIR="$2"; CACHE_ENABLED=true; shift 2 ;;
+    --no-cache) CACHE_ENABLED=false; shift ;;
     --keep-work) KEEP_WORK=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Неизвестная опция: $1" >&2; usage >&2; exit 2 ;;
@@ -77,7 +95,7 @@ if [[ "$SOURCE_MODE" == download && "$PROJECT_REF_MODE" == latest ]]; then
   exit 2
 fi
 
-for cmd in python3 sha256sum tar gzip find git; do command -v "$cmd" >/dev/null 2>&1 || { echo "Не найдена команда: $cmd" >&2; exit 2; }; done
+for cmd in python3 sha256sum tar gzip find git awk grep sort xargs; do command -v "$cmd" >/dev/null 2>&1 || { echo "Не найдена команда: $cmd" >&2; exit 2; }; done
 META_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 [[ "$META_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "Не удалось определить commit meta" >&2; exit 2; }
 OUT_DIR="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$OUT_DIR")"
@@ -88,6 +106,23 @@ mkdir -p "$OUT_DIR"
 if [[ -z "$WORK_DIR" ]]; then WORK_DIR="$(mktemp -d -t f2re-stack.XXXXXXXX)"; else mkdir -p "$WORK_DIR"; fi
 cleanup() { [[ "$KEEP_WORK" == true ]] || rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
+
+if [[ "$CACHE_ENABLED" == true ]]; then
+  CACHE_DIR="$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$CACHE_DIR")"
+  mkdir -p "$CACHE_DIR" || { echo "Не удалось создать кеш: $CACHE_DIR" >&2; exit 2; }
+  echo "==> Кеш инструментов: $CACHE_DIR"
+else
+  CACHE_DIR="$WORK_DIR/cache"
+  mkdir -p "$CACHE_DIR"
+  echo "==> Кеш инструментов отключён: используется временный $CACHE_DIR"
+fi
+NPM_CACHE="$CACHE_DIR/npm"
+PIP_CACHE="$CACHE_DIR/pip"
+KAFEDRA_CACHE="$CACHE_DIR/kafedra-runtime/v${NODE_VERSION}"
+mkdir -p "$NPM_CACHE" "$PIP_CACHE" "$KAFEDRA_CACHE"
+export npm_config_cache="$NPM_CACHE"
+export NPM_CONFIG_CACHE="$NPM_CACHE"
+export PIP_CACHE_DIR="$PIP_CACHE"
 
 resolve_project_refs() {
   local resolved="$WORK_DIR/managed-projects.resolved.json" refs="$WORK_DIR/project-refs.tsv"
@@ -170,6 +205,20 @@ PY
   gh run download "$run_id" --repo "$repo" --name "$artifact" --dir "$destination" >/dev/null || return 25
 }
 
+download_atomic() {
+  local url="$1" target="$2" tmp="${target}.part.$$"
+  command -v curl >/dev/null 2>&1 || { echo "Для загрузки в кеш нужен curl" >&2; return 2; }
+  rm -f "$tmp"
+  curl -fL --retry 3 --retry-delay 1 "$url" -o "$tmp"
+  mv "$tmp" "$target"
+}
+
+node_archive_valid() {
+  local cache="$1" archive="$2"
+  [[ -f "$cache/$archive" && -f "$cache/SHASUMS256.txt" ]] || return 1
+  (cd "$cache" && grep -E "  ${archive}$" SHASUMS256.txt | sha256sum -c --strict - >/dev/null 2>&1)
+}
+
 ensure_node_runtime() {
   NODE_RUNTIME_RESOLVED=""
   if [[ -n "${NODE_RUNTIME_DIR:-}" ]]; then
@@ -177,23 +226,57 @@ ensure_node_runtime() {
     NODE_RUNTIME_RESOLVED="$(cd "$NODE_RUNTIME_DIR" && pwd -P)"
     return 0
   fi
-  for cmd in curl xz; do command -v "$cmd" >/dev/null 2>&1 || { echo "Для автозагрузки Node.js нужен $cmd" >&2; return 2; }; done
-  local machine node_arch archive base cache extracted
+
+  local machine node_arch archive base cache extracted archive_ok=false
   machine="$(uname -m)"
   case "$machine" in x86_64|amd64) node_arch=x64 ;; aarch64|arm64) node_arch=arm64 ;; *) echo "Неподдерживаемая архитектура build host: $machine" >&2; return 2 ;; esac
   archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
   base="https://nodejs.org/dist/v${NODE_VERSION}"
-  cache="$WORK_DIR/node-runtime"
-  mkdir -p "$cache"
-  if [[ ! -f "$cache/$archive" || ! -f "$cache/SHASUMS256.txt" ]]; then
-    echo "==> Node.js $NODE_VERSION: загрузка автономного runtime" >&2
-    curl -fL --retry 3 "$base/$archive" -o "$cache/$archive"
-    curl -fL --retry 3 "$base/SHASUMS256.txt" -o "$cache/SHASUMS256.txt"
-  fi
-  (cd "$cache" && grep -E "  ${archive}$" SHASUMS256.txt | sha256sum -c --strict -)
+  cache="$CACHE_DIR/node/v${NODE_VERSION}/linux-${node_arch}"
   extracted="$cache/node-v${NODE_VERSION}-linux-${node_arch}"
-  [[ -d "$extracted" ]] || tar -xJf "$cache/$archive" -C "$cache"
+  mkdir -p "$cache"
+
+  if node_archive_valid "$cache" "$archive"; then
+    archive_ok=true
+  elif [[ -f "$cache/$archive" || -f "$cache/SHASUMS256.txt" ]]; then
+    echo "    Кеш Node.js неполон или повреждён — восстанавливаем." >&2
+    rm -f "$cache/$archive" "$cache/SHASUMS256.txt"
+    rm -rf "$extracted"
+  fi
+
+  if [[ "$archive_ok" == true && -x "$extracted/bin/node" && -x "$extracted/bin/npm" ]] && \
+     [[ "$("$extracted/bin/node" --version 2>/dev/null || true)" == "v${NODE_VERSION}" ]]; then
+    echo "==> Node.js $NODE_VERSION: используем проверенный кеш"
+    NODE_RUNTIME_RESOLVED="$extracted"
+    return 0
+  fi
+
+  if [[ "$archive_ok" == false ]]; then
+    echo "==> Node.js $NODE_VERSION: нет в кеше, загружаем один раз" >&2
+    download_atomic "$base/SHASUMS256.txt" "$cache/SHASUMS256.txt"
+    download_atomic "$base/$archive" "$cache/$archive"
+    if ! node_archive_valid "$cache" "$archive"; then
+      echo "Кеш Node.js не прошёл SHA-256 проверку после загрузки." >&2
+      rm -f "$cache/$archive" "$cache/SHASUMS256.txt"
+      return 2
+    fi
+  fi
+
+  if [[ ! -x "$extracted/bin/node" || ! -x "$extracted/bin/npm" ]] || \
+     [[ "$("$extracted/bin/node" --version 2>/dev/null || true)" != "v${NODE_VERSION}" ]]; then
+    command -v xz >/dev/null 2>&1 || { echo "Для распаковки Node.js нужен xz" >&2; return 2; }
+    local extract_tmp="$cache/.extract.$$"
+    rm -rf "$extract_tmp" "$extracted"
+    mkdir -p "$extract_tmp"
+    tar -xJf "$cache/$archive" -C "$extract_tmp"
+    [[ -d "$extract_tmp/node-v${NODE_VERSION}-linux-${node_arch}" ]] || { echo "Архив Node.js имеет неожиданную структуру" >&2; rm -rf "$extract_tmp"; return 2; }
+    mv "$extract_tmp/node-v${NODE_VERSION}-linux-${node_arch}" "$extracted"
+    rmdir "$extract_tmp" 2>/dev/null || true
+  fi
+
   [[ -x "$extracted/bin/node" && -x "$extracted/bin/npm" ]] || { echo "Скачанный Node.js runtime неполон: $extracted" >&2; return 2; }
+  [[ "$("$extracted/bin/node" --version)" == "v${NODE_VERSION}" ]] || { echo "Версия Node.js в кеше не совпадает с $NODE_VERSION" >&2; return 2; }
+  echo "    Node.js сохранён в кеш: $extracted" >&2
   NODE_RUNTIME_RESOLVED="$extracted"
 }
 
@@ -233,6 +316,7 @@ require_build_python() {
   if [[ -z "$BUILD_PYTHON_RESOLVED" ]]; then ensure_build_python; fi
   [[ -x "$BUILD_PYTHON_RESOLVED" ]] || return 2
   echo "    Python build runtime: $BUILD_PYTHON_RESOLVED ($("$BUILD_PYTHON_RESOLVED" --version 2>&1))" >&2
+  echo "    pip cache: $PIP_CACHE" >&2
 }
 
 clone_exact() {
@@ -268,6 +352,7 @@ build_docomator() {
   echo "    docomator: версия $(source_version "$src"), commit $commit"
   mkdir -p "$dest"
   (cd "$src" && PATH="$runtime/bin:$PATH" PROJECT_CONTROL_PYTHON_BIN=python3 \
+    npm_config_cache="$NPM_CACHE" NPM_CONFIG_CACHE="$NPM_CACHE" \
     ./scripts/project-control/build-bundle.sh \
       --target-profile generic --node-runtime-dir "$runtime" --without-llm --without-preview \
       --without-ux-acceptance --skip-tests --force --output "$dest") >/dev/null
@@ -282,9 +367,9 @@ build_planer() {
   python_bin="$BUILD_PYTHON_RESOLVED"
   rm -rf "$venv"
   "$python_bin" -m venv "$venv" || { echo "Не удалось создать venv через $python_bin. Проверьте модуль venv для Python 3.11+." >&2; return 2; }
-  "$venv/bin/python" -m pip install --disable-pip-version-check -q -r "$src/requirements.txt"
+  PIP_CACHE_DIR="$PIP_CACHE" "$venv/bin/python" -m pip install --disable-pip-version-check -q -r "$src/requirements.txt"
   mkdir -p "$dest"
-  (cd "$src" && PYTHON_BIN="$venv/bin/python" ./offline/build_project_control_bundle.sh --output "$dest" --python "$venv/bin/python") >/dev/null
+  (cd "$src" && PIP_CACHE_DIR="$PIP_CACHE" PYTHON_BIN="$venv/bin/python" ./offline/build_project_control_bundle.sh --output "$dest" --python "$venv/bin/python") >/dev/null
 }
 
 build_kafedra() {
@@ -295,9 +380,11 @@ build_kafedra() {
   mkdir -p "$dest"
   (cd "$src" && \
     PATH="$runtime/bin:$PATH" \
+    npm_config_cache="$NPM_CACHE" \
+    NPM_CONFIG_CACHE="$NPM_CACHE" \
     GITHUB_SHA="$commit" \
     OUT_DIR="$dest" \
-    KAFEDRA_RUNTIME_CACHE_DIR="$WORK_DIR/kafedra-runtime-cache" \
+    KAFEDRA_RUNTIME_CACHE_DIR="$KAFEDRA_CACHE" \
     bash scripts/offline/build-bundle.sh >/dev/null)
   archive="$(find "$dest" -maxdepth 1 -type f -name 'kafedra-planner-*.tar.gz' ! -name '*-llm.tar.gz' -print -quit)"
   [[ -n "$archive" && -f "$archive" && -f "$archive.sha256" ]] || { echo "Kafedra runtime offline bundle не создан" >&2; return 3; }
