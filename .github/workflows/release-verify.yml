@@ -1,0 +1,124 @@
+name: Release Verify
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  verify:
+    name: Published assets, SHA-256 and manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolve release source
+        id: source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "${{ github.event_name }}" == workflow_run ]]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "upstream=${{ github.event.workflow_run.conclusion }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "upstream=success" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Require successful Release workflow
+        if: steps.source.outputs.upstream != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          UPSTREAM: ${{ steps.source.outputs.upstream }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SOURCE_SHA" \
+            -f state=failure -f context='release/assets' \
+            -f description="Release workflow: $UPSTREAM" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions"
+          exit 1
+
+      - name: Fetch release metadata and integrity files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(tr -d '[:space:]' < project-control/VERSION)"
+          TAG="v$VERSION"
+          echo "$VERSION" > version.txt
+          gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets > release.json
+          mkdir verify
+          gh release download "$TAG" --dir verify \
+            --pattern 'release-manifest.json' \
+            --pattern 'SHA256SUMS' \
+            --pattern '*.sha256'
+
+      - name: Verify complete asset contract from GitHub digests
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(cat version.txt)"
+          python3 - "$VERSION" release.json verify <<'PY'
+          import json,re,sys
+          from pathlib import Path
+          version=sys.argv[1]; root=Path(sys.argv[3])
+          release=json.load(open(sys.argv[2],encoding='utf-8'))
+          assert release['tagName']==f'v{version}'
+          assert release['isDraft'] is False and release['isPrerelease'] is False
+          assets={x['name']:x for x in release['assets']}
+          required={
+            'SHA256SUMS','release-manifest.json','install-project-control.sh',
+            f'f2re-meta-{version}-all-astra-amd64.zip',f'f2re-meta-{version}-all-astra-amd64.zip.sha256',
+            f'f2re-meta-{version}-astra-1.7-amd64.tar.gz',f'f2re-meta-{version}-astra-1.7-amd64.tar.gz.sha256',
+            f'f2re-meta-{version}-astra-1.8-amd64.tar.gz',f'f2re-meta-{version}-astra-1.8-amd64.tar.gz.sha256',
+            'f2re-meta-astra-1.7-amd64.tar.gz','f2re-meta-astra-1.7-amd64.tar.gz.sha256',
+            'f2re-meta-astra-1.8-amd64.tar.gz','f2re-meta-astra-1.8-amd64.tar.gz.sha256',
+            f'project-control-{version}-linux-x64.tar.gz',f'project-control-{version}-linux-x64.tar.gz.sha256',
+            'project-control-linux-x64.tar.gz','project-control-linux-x64.tar.gz.sha256'}
+          assert set(assets)==required,(sorted(required-set(assets)),sorted(set(assets)-required))
+          def digest(name):
+            value=(assets[name].get('digest') or '')
+            assert value.startswith('sha256:'),(name,value)
+            value=value.split(':',1)[1]
+            assert re.fullmatch(r'[0-9a-f]{64}',value)
+            return value
+          manifest=json.loads((root/'release-manifest.json').read_text(encoding='utf-8'))
+          assert manifest['schema']=='f2re-github-release/v1' and manifest['version']==version and manifest['tag']==f'v{version}'
+          assert re.fullmatch(r'[0-9a-f]{40}',manifest['sourceCommit'])
+          assert {(x['version'],x['arch']) for x in manifest['targets']}=={('1.7','amd64'),('1.8','amd64')}
+          manifest_assets={x['name']:x for x in manifest['assets']}
+          for name,item in manifest_assets.items():
+            assert item['sha256']==digest(name),(name,item['sha256'],digest(name))
+            assert item['bytes']==assets[name]['size']
+          for a,b in [(f'f2re-meta-{version}-astra-1.7-amd64.tar.gz','f2re-meta-astra-1.7-amd64.tar.gz'),(f'f2re-meta-{version}-astra-1.8-amd64.tar.gz','f2re-meta-astra-1.8-amd64.tar.gz'),(f'project-control-{version}-linux-x64.tar.gz','project-control-linux-x64.tar.gz')]:
+            assert digest(a)==digest(b),(a,b)
+          def sidecar(path):
+            parts=path.read_text(encoding='utf-8').strip().split(); assert len(parts)>=2
+            return parts[0],Path(parts[-1].lstrip('*')).name
+          for name in [f'f2re-meta-{version}-all-astra-amd64.zip.sha256',f'f2re-meta-{version}-astra-1.7-amd64.tar.gz.sha256',f'f2re-meta-{version}-astra-1.8-amd64.tar.gz.sha256','f2re-meta-astra-1.7-amd64.tar.gz.sha256','f2re-meta-astra-1.8-amd64.tar.gz.sha256',f'project-control-{version}-linux-x64.tar.gz.sha256','project-control-linux-x64.tar.gz.sha256']:
+            declared,target=sidecar(root/name); assert declared==digest(target),(name,target)
+          sums={}
+          for raw in (root/'SHA256SUMS').read_text(encoding='utf-8').splitlines():
+            if raw.strip():
+              h,n=raw.split(None,1); sums[Path(n.strip().lstrip('*')).name]=h
+          for name,h in sums.items(): assert h==digest(name),(name,h,digest(name))
+          print('release-verify-ok:',version,'assets=',len(assets),'manifest=',len(manifest_assets),'sums=',len(sums))
+          (root/'source-commit.txt').write_text(manifest['sourceCommit']+'\n',encoding='utf-8')
+          PY
+
+      - name: Publish canonical release/assets success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SOURCE_COMMIT="$(tr -d '[:space:]' < verify/source-commit.txt)"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SOURCE_COMMIT" \
+            -f state=success -f context='release/assets' \
+            -f description='17 release assets and GitHub SHA-256 digests verified' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest"
