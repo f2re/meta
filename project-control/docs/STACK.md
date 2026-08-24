@@ -48,10 +48,33 @@ sudo ./deploy-stack.sh
 5. потоково загрузит `docomator` через штатный `/api/projects/docomator/update`;
 6. дождётся точной активной версии и зелёного health;
 7. аналогично обновит `planer-solving`;
-8. аналогично обновит `kafedra-planner`;
+8. для **первой** установки `kafedra-planner` автоматически подготовит штатный env-шаблон с непересекающимися портами, затем обновит его через Project Control;
 9. выведет итоговое состояние всех трёх сервисов.
 
 При ошибке выполнение останавливается. Rollback конкретного приложения остаётся ответственностью его native installer, как и при обычном обновлении через UI Project Control.
+
+## Совместная установка на одном хосте
+
+One-shot использует стабильный профиль:
+
+```text
+planer-solving API       8001
+docomator API            8080
+docomator LLM            8081
+kafedra-planner API      8090
+kafedra-planner LLM      8091
+project-control          9090
+```
+
+У `docomator` и `kafedra-planner` native API default равен `8080`, поэтому чистая установка без разведения портов конфликтовала бы. `deploy-stack.sh` решает это только для **новой** Kafedra Planner: из проверенного native bundle извлекается его собственный `application/.env.example`, в копии меняются только `KAFEDRA_PORT`, `KAFEDRA_LLM_ENDPOINT` и `KAFEDRA_LLM_PORT`, после чего штатный installer использует этот постоянный env. Если `/etc/kafedra-planner/kafedra-planner.env` уже существует, он не изменяется.
+
+При ошибке первой установки временно подготовленный env удаляется. После успешной установки права приводятся к `root:kafedra-planner 0640`.
+
+При необходимости свежие порты можно переопределить:
+
+```bash
+sudo F2RE_KAFEDRA_PORT=18090 F2RE_KAFEDRA_LLM_PORT=18091 ./deploy-stack.sh
+```
 
 ## Режимы получения артефактов
 
@@ -82,7 +105,7 @@ sudo ./deploy-stack.sh
 - `meta`: `scripts/build-meta-bundle.sh`;
 - `docomator`: `scripts/project-control/build-bundle.sh`;
 - `planer-solving`: `offline/build_project_control_bundle.sh`;
-- `kafedra-planner`: `scripts/offline/build-project-control-bundle.sh` внутри Debian 12 container.
+- `kafedra-planner`: native full air-gap archive собирается `scripts/offline/build-full-bundle.sh` внутри Debian 12 container, а Project Control wrapper создаётся на host штатным `project-control-package.py` с **явно переданным pinned SHA**.
 
 Для `meta`/`docomator` автоматически скачивается официальный standalone Node.js `24.15.0` и проверяется по `SHASUMS256.txt`, если `NODE_RUNTIME_DIR` не задан. Для полной локальной сборки `kafedra-planner` нужен Docker.
 
