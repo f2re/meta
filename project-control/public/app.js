@@ -24,20 +24,13 @@ const portList = document.querySelector("#portList");
 const nginxList = document.querySelector("#nginxList");
 const optList = document.querySelector("#optList");
 
-function endpoint(relative = "") {
-  return new URL(String(relative).replace(/^\/+/, ""), apiRoot).toString();
-}
-
-function authHeaders(extra = {}) {
-  return { ...extra, Authorization: `Bearer ${state.token}` };
-}
-
+function endpoint(relative = "") { return new URL(String(relative).replace(/^\/+/, ""), apiRoot).toString(); }
+function authHeaders(extra = {}) { return { ...extra, Authorization: `Bearer ${state.token}` }; }
 function formatTime(value) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(date);
 }
-
 function formatBytes(value) {
   const bytes = Number(value);
   if (!Number.isFinite(bytes)) return "—";
@@ -46,14 +39,8 @@ function formatBytes(value) {
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} МиБ`;
   return `${(bytes / 1024 ** 3).toFixed(1)} ГиБ`;
 }
-
-function operationLabel(value) {
-  return ({ update: "Обновление", install: "Установка", restart: "Перезапуск" })[value] || value || "—";
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+function operationLabel(value) { return ({ update: "Обновление", install: "Установка", restart: "Перезапуск" })[value] || value || "—"; }
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 async function api(relative, options = {}) {
   const response = await fetch(endpoint(relative), { ...options, headers: authHeaders(options.headers || {}) });
@@ -73,20 +60,22 @@ function openKeyDialog() {
   if (!keyDialog.open) keyDialog.showModal();
   keyInput.focus();
 }
-
 function setBoot(kind, text) {
   bootStatus.className = `banner ${kind}`;
   bootStatus.textContent = text;
 }
-
 function setBusy(value, text = "") {
   state.busy = value;
   document.querySelector("#refreshButton").disabled = value;
   document.querySelector("#rescanButton").disabled = value;
-  document.querySelectorAll(".restart, .file-input").forEach((element) => { element.disabled = value; });
+  document.querySelectorAll(".file-input").forEach((element) => { element.disabled = value; });
+  document.querySelectorAll(".restart").forEach((element) => {
+    const projectId = element.closest(".project-card")?.dataset.projectId;
+    const project = state.projects.find((item) => item.id === projectId);
+    element.disabled = value || !project?.installed;
+  });
   if (text) globalStatus.textContent = text;
 }
-
 function appendText(parent, className, text) {
   const item = document.createElement("div");
   if (className) item.className = className;
@@ -108,8 +97,7 @@ function renderHistory(history) {
   }
   for (const item of history.slice(0, 30)) {
     const row = document.createElement("tr");
-    const version = item.fromVersion && item.toVersion && item.fromVersion !== item.toVersion
-      ? `${item.fromVersion} → ${item.toVersion}` : (item.toVersion || item.fromVersion || "—");
+    const version = item.fromVersion && item.toVersion && item.fromVersion !== item.toVersion ? `${item.fromVersion} → ${item.toVersion}` : (item.toVersion || item.fromVersion || "—");
     const result = item.status === "success" ? "Успешно" : `Ошибка: ${item.error || "неизвестно"}`;
     for (const value of [formatTime(item.finishedAt), item.displayName || item.projectId, operationLabel(item.action), version, result]) {
       const cell = document.createElement("td");
@@ -124,7 +112,6 @@ function servicesText(project) {
   const all = [...(project.requiredServices || []), ...(project.optionalServices || []).filter((item) => item.active || item.enabled)];
   return all.length ? all.map((item) => `${item.name.replace(/\.service$/, "")}: ${item.active ? "работает" : "остановлен"}`).join("; ") : "—";
 }
-
 function evidenceText(discovery) {
   if (!discovery?.evidence) return "нет признаков";
   const result = [];
@@ -134,7 +121,6 @@ function evidenceText(discovery) {
   if (discovery.evidence.nginx?.length) result.push("nginx");
   return result.length ? result.join(", ") : "нет признаков";
 }
-
 function proxyText(discovery) {
   const routes = discovery?.nginxRoutes || [];
   if (!routes.length) return "—";
@@ -143,9 +129,10 @@ function proxyText(discovery) {
     return `${host}${route.location || "/"} → ${route.proxyPass}`;
   }).join("; ");
 }
-
 function healthText(project) {
+  const discovery = project.discovery || {};
   if (project.healthy) return `Health OK${project.health?.statusCode ? ` · HTTP ${project.health.statusCode}` : ""}`;
+  if (discovery.runtimeHealthy) return `Работает по независимому сканированию · ${discovery.health?.statusCode ? `HTTP ${discovery.health.statusCode}` : "health OK"}`;
   if (!project.installed && project.detected) return "Обнаружены признаки проекта, но штатная установка Project Control не подтверждена.";
   if (!project.installed) return "Штатная установка не обнаружена. Можно установить готовый .f2re.zip.";
   if (project.health?.error) return `Health не прошёл: ${project.health.error}`;
@@ -154,24 +141,22 @@ function healthText(project) {
   return stopped.length ? `Не работают службы: ${stopped.join(", ")}` : "Состояние требует диагностики.";
 }
 
-function renderDiscovery(discovery) {
+function renderDiscovery(discovery, executorError = null) {
   discoverySummary.replaceChildren();
   discoveryWarnings.replaceChildren();
   portList.replaceChildren();
   nginxList.replaceChildren();
   optList.replaceChildren();
-
   const detected = state.projects.filter((project) => project.detected).length;
   const listeners = discovery?.listeningPorts || [];
   const nginxRoutes = discovery?.nginx?.routes || [];
   const optEntries = discovery?.opt?.entries || [];
-  const cards = [
+  for (const [label, value, hint] of [
     ["Проекты", `${detected}/${state.projects.length}`, "обнаружены по фактическим признакам"],
     ["TCP LISTEN", String(listeners.length), "активных слушающих сокетов"],
     ["nginx", String(nginxRoutes.length), `proxy_pass в ${discovery?.nginx?.parsedFiles || 0} файлах`],
     ["/opt", String(optEntries.length), "каталогов просмотрено"]
-  ];
-  for (const [label, value, hint] of cards) {
+  ]) {
     const card = document.createElement("div");
     card.className = "discovery-card";
     appendText(card, "discovery-label", label);
@@ -179,19 +164,14 @@ function renderDiscovery(discovery) {
     appendText(card, "quiet", hint);
     discoverySummary.append(card);
   }
-
   scanAge.textContent = discovery?.scannedAt ? `скан: ${formatTime(discovery.scannedAt)} · ${discovery.durationMs || 0} мс` : "";
+  if (executorError) appendText(discoveryWarnings, "diagnostic error", `Root executor недоступен: ${executorError}. Сканирование хоста продолжает работать, но обновление и перезапуск недоступны.`);
   const diagnostics = discovery?.diagnostics || [];
-  if (diagnostics.length) {
-    for (const text of diagnostics) appendText(discoveryWarnings, "diagnostic warning", text);
-  } else {
-    appendText(discoveryWarnings, "diagnostic ok", "Сканирование завершено без внутренних ошибок.");
-  }
+  for (const value of diagnostics) appendText(discoveryWarnings, "diagnostic warning", value);
+  if (!executorError && !diagnostics.length) appendText(discoveryWarnings, "diagnostic ok", "Сканирование завершено без внутренних ошибок.");
 
   document.querySelector("#portCount").textContent = listeners.length ? `(${listeners.length})` : "";
-  for (const item of [...listeners].sort((a, b) => a.port - b.port).slice(0, 100)) {
-    appendText(portList, "compact-row", `${item.address}:${item.port}${item.process ? ` · ${item.process}${item.pid ? ` pid=${item.pid}` : ""}` : ""}`);
-  }
+  for (const item of [...listeners].sort((a, b) => a.port - b.port).slice(0, 100)) appendText(portList, "compact-row", `${item.address}:${item.port}${item.process ? ` · ${item.process}${item.pid ? ` pid=${item.pid}` : ""}` : ""}`);
   if (!listeners.length) appendText(portList, "empty", "Слушающие TCP-порты не получены.");
 
   document.querySelector("#nginxCount").textContent = nginxRoutes.length ? `(${nginxRoutes.length})` : "";
@@ -216,8 +196,7 @@ async function pollJob(jobId, updateProgress) {
     const job = await api(`jobs/${jobId}`);
     if (job.status === "success") return job.result;
     if (job.status === "failed") throw new Error(job.error || "Установка завершилась ошибкой.");
-    const elapsed = Math.round((Date.now() - started) / 1000);
-    updateProgress(`Установка выполняется… ${elapsed} с`);
+    updateProgress(`Установка выполняется… ${Math.round((Date.now() - started) / 1000)} с`);
     await sleep(2000);
   }
   throw new Error("Превышено время ожидания операции обновления.");
@@ -234,7 +213,6 @@ async function uploadPackage(project, file, card) {
     message.textContent = "Выберите Project Control package с расширением .f2re.zip / .zip.";
     return;
   }
-
   let uploadId = null;
   let applyStarted = false;
   try {
@@ -244,40 +222,25 @@ async function uploadPackage(project, file, card) {
     text.textContent = "Подготовка загрузки…";
     message.className = "message";
     message.textContent = `${file.name} · ${formatBytes(file.size)}`;
-
-    const start = await api("uploads/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: project.id, fileName: file.name, size: file.size })
-    });
+    const start = await api("uploads/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, fileName: file.name, size: file.size }) });
     uploadId = start.uploadId;
     const chunkBytes = start.chunkBytes || 512 * 1024;
     let offset = 0;
     let index = 0;
     while (offset < file.size) {
       const end = Math.min(file.size, offset + chunkBytes);
-      const chunk = file.slice(offset, end);
-      await api(`uploads/${uploadId}/chunk`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream", "X-Chunk-Index": String(index) },
-        body: chunk
-      });
+      await api(`uploads/${uploadId}/chunk`, { method: "PUT", headers: { "Content-Type": "application/octet-stream", "X-Chunk-Index": String(index) }, body: file.slice(offset, end) });
       offset = end;
       index += 1;
-      const percent = Math.round((offset / file.size) * 75);
-      bar.style.width = `${percent}%`;
+      bar.style.width = `${Math.round((offset / file.size) * 75)}%`;
       text.textContent = `Загрузка ${Math.round((offset / file.size) * 100)}%`;
     }
-
     text.textContent = "Файл получен. Запускаю проверку и установку…";
     bar.style.width = "80%";
     const queued = await api(`uploads/${uploadId}/complete`, { method: "POST" });
     applyStarted = true;
-    message.textContent = `Операция ${queued.jobId.slice(0, 8)} запущена. Можно работать через nginx — длительный HTTP-запрос больше не держится.`;
-    const result = await pollJob(queued.jobId, (label) => {
-      text.textContent = label;
-      bar.style.width = "90%";
-    });
+    message.textContent = `Операция ${queued.jobId.slice(0, 8)} запущена. Длительный nginx-запрос не используется.`;
+    const result = await pollJob(queued.jobId, (label) => { text.textContent = label; bar.style.width = "90%"; });
     bar.style.width = "100%";
     text.textContent = "Обновление завершено";
     message.className = "message success";
@@ -289,22 +252,21 @@ async function uploadPackage(project, file, card) {
     text.textContent = "Обновление не выполнено";
     if (uploadId && !applyStarted) await api(`uploads/${uploadId}`, { method: "DELETE" }).catch(() => {});
     await refresh(true).catch(() => {});
-  } finally {
-    setBusy(false);
-  }
+  } finally { setBusy(false); }
 }
 
 function renderProjects(projects) {
   grid.replaceChildren();
   for (const project of projects) {
     const discovery = project.discovery || {};
+    const observedWorking = Boolean(project.healthy || discovery.runtimeHealthy);
     const card = template.content.firstElementChild.cloneNode(true);
     card.dataset.projectId = project.id;
     card.querySelector(".project-id").textContent = project.id;
     card.querySelector(".project-name").textContent = project.displayName;
     const pill = card.querySelector(".status-pill");
-    if (project.healthy) {
-      pill.textContent = "Работает";
+    if (observedWorking) {
+      pill.textContent = project.healthy ? "Работает" : "Работает · обнаружен";
       pill.classList.add("ok");
     } else if (project.installed || project.detected) {
       pill.textContent = project.installed ? "Требует внимания" : "Обнаружен";
@@ -313,21 +275,17 @@ function renderProjects(projects) {
       pill.textContent = "Не найден";
       pill.classList.add("off");
     }
-
     card.querySelector(".version").textContent = project.version || project.observedVersion || "—";
     card.querySelector(".install-path").textContent = project.release || discovery.detectedCurrentTarget || discovery.detectedPath || "—";
-    card.querySelector(".port").textContent = discovery.configuredPort
-      ? `${discovery.configuredPort}${discovery.listeners?.length ? " · LISTEN" : " · не слушается"}` : "—";
+    card.querySelector(".port").textContent = discovery.configuredPort ? `${discovery.configuredPort}${discovery.listeners?.length ? " · LISTEN" : " · не слушается"}` : "—";
     card.querySelector(".proxy").textContent = proxyText(discovery);
     card.querySelector(".updated").textContent = formatTime(project.lastUpdatedAt);
     card.querySelector(".services").textContent = servicesText(project);
     card.querySelector(".evidence").textContent = evidenceText(discovery);
-
     const health = card.querySelector(".health-box");
     health.textContent = healthText(project);
-    health.classList.toggle("ok", project.healthy);
-    health.classList.toggle("bad", !project.healthy && (project.installed || project.detected));
-
+    health.classList.toggle("ok", observedWorking);
+    health.classList.toggle("bad", !observedWorking && (project.installed || project.detected));
     const warnings = card.querySelector(".project-warnings");
     const warningItems = [...(discovery.warnings || [])];
     if (project.lastFailure?.error) warningItems.unshift(`Последняя ошибка: ${project.lastFailure.error}`);
@@ -338,9 +296,7 @@ function renderProjects(projects) {
     const input = card.querySelector(".file-input");
     const choose = () => { if (!state.busy && !input.disabled) input.click(); };
     zone.addEventListener("click", choose);
-    zone.addEventListener("keydown", (event) => {
-      if ((event.key === "Enter" || event.key === " ") && !state.busy) { event.preventDefault(); choose(); }
-    });
+    zone.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !state.busy) { event.preventDefault(); choose(); } });
     input.addEventListener("change", () => uploadPackage(project, input.files?.[0], card));
     for (const name of ["dragenter", "dragover"]) zone.addEventListener(name, (event) => { event.preventDefault(); if (!state.busy) zone.classList.add("drag"); });
     for (const name of ["dragleave", "drop"]) zone.addEventListener(name, (event) => { event.preventDefault(); zone.classList.remove("drag"); });
@@ -381,12 +337,12 @@ async function refresh(rescan = false) {
   state.projects = data.projects || [];
   renderProjects(state.projects);
   renderHistory(data.history || []);
-  renderDiscovery(data.discovery || {});
-  securityBanner.classList.toggle("hidden", Boolean(data.requireSignature));
-  securityBanner.textContent = data.requireSignature ? "" : "Подпись release package необязательна. SHA-256 проверяется, но для общего сегмента сети рекомендуется PROJECT_CONTROL_REQUIRE_SIGNATURE=true.";
-  setBoot("success", `Интерфейс и API работают · Project Control ${data.projects ? "подключён" : "не отвечает"} · base ${apiRoot.pathname}`);
-  setTimeout(() => bootStatus.classList.add("hidden"), 2500);
-  globalStatus.textContent = data.operationRunning ? "Executor выполняет системную операцию." : `Проверено: ${formatTime(data.discovery?.scannedAt || new Date().toISOString())}`;
+  renderDiscovery(data.discovery || {}, data.executorError || null);
+  securityBanner.classList.toggle("hidden", data.requireSignature !== false);
+  securityBanner.textContent = data.requireSignature === false ? "Подпись release package необязательна. SHA-256 проверяется, но для общего сегмента сети рекомендуется PROJECT_CONTROL_REQUIRE_SIGNATURE=true." : "";
+  setBoot(data.executorError ? "error" : "success", data.executorError ? `UI и discovery работают, но executor недоступен: ${data.executorError}` : `Интерфейс, API и executor работают · base ${apiRoot.pathname}`);
+  if (!data.executorError) setTimeout(() => bootStatus.classList.add("hidden"), 2500);
+  globalStatus.textContent = data.executorError ? "Сканирование доступно; системные операции заблокированы до восстановления executor." : (data.operationRunning ? "Executor выполняет системную операцию." : `Проверено: ${formatTime(data.discovery?.scannedAt || new Date().toISOString())}`);
 }
 
 function showFatal(error) {
@@ -401,26 +357,19 @@ document.querySelector("#refreshButton").addEventListener("click", () => refresh
 document.querySelector("#rescanButton").addEventListener("click", () => refresh(true).catch(showFatal));
 document.querySelector("#changeKeyButton").addEventListener("click", openKeyDialog);
 document.querySelector("#cancelKeyButton").addEventListener("click", () => keyDialog.close());
-
 keyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const candidate = keyInput.value.trim();
   keyError.textContent = "";
   try {
-    const response = await fetch(endpoint("session/check"), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${candidate}`, "Content-Type": "application/json" },
-      body: "{}"
-    });
+    const response = await fetch(endpoint("session/check"), { method: "POST", headers: { Authorization: `Bearer ${candidate}`, "Content-Type": "application/json" }, body: "{}" });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Ключ не принят.");
     state.token = candidate;
     sessionStorage.setItem("projectControlToken", candidate);
     keyDialog.close();
     await refresh(true);
-  } catch (error) {
-    keyError.textContent = error.message;
-  }
+  } catch (error) { keyError.textContent = error.message; }
 });
 
 setBoot("info", `JavaScript загружен · API base ${apiRoot.pathname}`);
