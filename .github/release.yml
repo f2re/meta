@@ -1,0 +1,28 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: "🚀 Возможности"
+      labels:
+        - enhancement
+        - feature
+    - title: "🐛 Исправления"
+      labels:
+        - bug
+        - fix
+    - title: "🛡️ Безопасность и надёжность"
+      labels:
+        - security
+        - reliability
+    - title: "📦 Сборка и релизы"
+      labels:
+        - ci
+        - release
+        - dependencies
+    - title: "📚 Документация"
+      labels:
+        - documentation
+    - title: "🧰 Прочие изменения"
+      labels:
+        - "*"
