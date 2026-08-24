@@ -1,0 +1,40 @@
+name: Улучшение
+description: Предложить улучшение Project Control, release flow или F2RE Stack
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решаем
+      description: Опишите пользовательскую или эксплуатационную проблему, а не только желаемую кнопку.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое поведение
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - UI / UX
+        - Discovery / monitoring
+        - Offline update
+        - Astra Linux compatibility
+        - Release / CI
+        - F2RE Stack
+        - Security
+        - Documentation
+    validations:
+      required: true
+  - type: checkboxes
+    id: offline
+    attributes:
+      label: Эксплуатационный контракт
+      options:
+        - label: Решение должно сохранять offline-first работу целевого сервера.
+          required: true
