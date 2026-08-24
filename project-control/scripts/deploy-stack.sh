@@ -127,7 +127,7 @@ preseed_kafedra_colocation() {
   local package_tool=/opt/project-control/current/src/package_tool.py
   [[ -f "$package_tool" ]] || { echo "Не найден package_tool Project Control: $package_tool" >&2; return 3; }
   local stage="$WORK/kafedra-preseed" wrapper="$WORK/kafedra-preseed/wrapper" native="$WORK/kafedra-preseed/native" payload
-  mkdir -p "$wrapper" "$native" /etc/kafedra-planner
+  mkdir -p "$wrapper" /etc/kafedra-planner
   payload="$(python3 "$package_tool" extract-payload "$package" "$wrapper")"
   python3 "$package_tool" extract-native "$payload" "$native" >/dev/null
   mapfile -t templates < <(find "$native" -type f -path '*/application/.env.example' -print)
