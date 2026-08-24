@@ -82,12 +82,12 @@ jobs:
           set -Eeuo pipefail
           DIST="$RUNNER_TEMP/f2re-stack-local-dist"
           mkdir -p "$DIST"
-          ./scripts/f2re-stack.sh build --astra 1.7 --output "$DIST"
+          ./scripts/f2re-stack.sh prepare --astra 1.7 --source build --output "$DIST"
           cd "$DIST"
           mapfile -t stacks < <(find . -maxdepth 1 -type f -name 'f2re-stack-*-astra-1.7-amd64.tar.gz' -print)
           test "${#stacks[@]}" -eq 1
           sha256sum -c --strict "${stacks[0]#./}.sha256"
-          test -f stack-inputs-1.7/docomator-0.6.3-linux-x64.tar.gz
+          find stack-inputs-1.7 -maxdepth 1 -type f -name 'docomator-*-linux-x64.tar.gz' -print -quit | grep -q .
           find stack-inputs-1.7 -maxdepth 1 -type f -name 'docomator-*-project-control.f2re.zip' -print -quit | grep -q .
           find stack-inputs-1.7 -maxdepth 1 -type f -name 'planer-solving-*-project-control.f2re.zip' -print -quit | grep -q .
           KAFEDRA_PACKAGE="$(find stack-inputs-1.7 -maxdepth 1 -type f -name 'kafedra-planner-*-project-control.f2re.zip' -print -quit)"
