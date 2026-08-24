@@ -1,0 +1,85 @@
+{
+  "schema": "f2re-managed-projects/v1",
+  "controllerApi": 1,
+  "verifiedAt": "2026-08-24",
+  "projects": [
+    {
+      "projectId": "docomator",
+      "displayName": "Оформлятор",
+      "repository": "https://github.com/f2re/docomator",
+      "defaultBranch": "main",
+      "verifiedCommit": "14975298fb596ad898f9a2f7612add275891e85e",
+      "adapter": "docomator-v1",
+      "nativeBundleFormat": "docomator-offline-v2",
+      "currentPath": "/opt/docomator/current",
+      "versionFile": "VERSION",
+      "configFile": "/etc/docomator/docomator.env",
+      "portKey": "DOCOMATOR_PORT",
+      "defaultPort": 8080,
+      "requiredServices": ["docomator-api.service", "docomator-worker.service"],
+      "optionalServices": ["docomator-llm.service"],
+      "healthPath": "/readyz",
+      "native": {
+        "verify": {"script": "verify-bundle.sh", "args": ["."]},
+        "update": {"script": "update.sh", "args": ["--bundle-root", "."]},
+        "install": {"script": "install.sh", "args": ["--bundle-root", ".", "--install-os-packages"]}
+      },
+      "release": {
+        "artifactPattern": "docomator-*-project-control.f2re.zip",
+        "ci": "github-actions"
+      }
+    },
+    {
+      "projectId": "planer-solving",
+      "displayName": "Борис по парам",
+      "repository": "https://github.com/f2re/planer-solving",
+      "defaultBranch": "main",
+      "verifiedCommit": "15e6b943f465ca25586f0c657a137bc3bf9f2b73",
+      "adapter": "planer-solving-v1",
+      "nativeBundleFormat": "planner-solving-offline-v3",
+      "currentPath": "/opt/planner-solving/current",
+      "versionFile": "VERSION",
+      "configFile": "/etc/default/planner-solving",
+      "portKey": "PLANNER_PORT",
+      "defaultPort": 8001,
+      "requiredServices": ["planner-solving.service"],
+      "optionalServices": [],
+      "healthPath": "/api/health",
+      "native": {
+        "verify": {"script": "verify_bundle.sh", "args": ["--quiet", "."]},
+        "update": {"script": "install_or_update.sh", "args": ["--yes"]},
+        "install": {"script": "install_or_update.sh", "args": ["--yes"]}
+      },
+      "release": {
+        "artifactPattern": "planer-solving-*-project-control.f2re.zip",
+        "ci": "github-actions"
+      }
+    },
+    {
+      "projectId": "kafedra-planner",
+      "displayName": "Кафедра Planner",
+      "repository": "https://github.com/f2re/kafedra-planner",
+      "defaultBranch": "main",
+      "verifiedCommit": "385ca86b554c84e8c72ed51ee6cab5a7e41300ad",
+      "adapter": "kafedra-planner-v1",
+      "nativeBundleFormat": "kafedra-full-airgap-v2",
+      "currentPath": "/opt/kafedra-planner/current",
+      "versionFile": "VERSION",
+      "configFile": "/etc/kafedra-planner/kafedra-planner.env",
+      "portKey": "KAFEDRA_PORT",
+      "defaultPort": 8080,
+      "requiredServices": ["kafedra-planner-api.service", "kafedra-planner-worker.service"],
+      "optionalServices": ["kafedra-planner-llama.service"],
+      "healthPath": "/api/system/health",
+      "native": {
+        "verify": null,
+        "update": {"script": "install.sh", "args": []},
+        "install": {"script": "install.sh", "args": []}
+      },
+      "release": {
+        "artifactPattern": "kafedra-planner-*-project-control.f2re.zip",
+        "ci": "github-actions"
+      }
+    }
+  ]
+}
