@@ -4,6 +4,27 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.2] - 2026-08-24
+
+### Fixed
+
+- Исправлен fallback build `f2re-stack.sh prepare`: вывод `sha256sum` больше не может попасть в значение пути автономного Node.js runtime и вызвать ложную ошибку `Для проверки compatibility manifest нужен Node.js`.
+- Автозагруженный Node.js перед сборкой теперь проходит явную проверку пути и `bin/node`, а выбранный runtime выводится в диагностике.
+- `dialog-polyfill.js` корректно отдаётся через nginx/path prefix, поэтому compatibility layer работает не только напрямую на `:9090`.
+- CLI-развёртывание приложения переведено на тот же chunked upload + asynchronous job API, что и web UI; большие `.f2re.zip` больше не зависят от одного длинного HTTP request.
+- `apply-package.py` учитывает path prefix в `--url`.
+
+### Added
+
+- Регрессионные тесты контракта Node runtime для F2RE Stack.
+- Тест proxy-prefix маршрутизации `dialog-polyfill.js`.
+- End-to-end Python-тест chunked upload клиента через URL prefix.
+
+### Changed
+
+- Project Control version: `0.5.1` → `0.5.2`.
+- Документация F2RE Stack уточняет exact-SHA поведение, обновление локального checkout и зависимости fallback build.
+
 ## [0.5.1] - 2026-08-24
 
 ### Fixed
@@ -67,5 +88,6 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.2]: https://github.com/f2re/meta/releases/tag/v0.5.2
 [0.5.1]: https://github.com/f2re/meta/releases/tag/v0.5.1
 [0.5.0]: https://github.com/f2re/meta/releases/tag/v0.5.0
