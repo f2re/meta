@@ -1,6 +1,6 @@
 {
   "name": "f2re-project-control",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Offline project monitoring and update controller for Astra Linux",
@@ -8,6 +8,6 @@
     "start": "node src/server.mjs",
     "executor": "node src/executor.mjs",
     "verify:compatibility": "node scripts/verify-compatibility.mjs",
-    "check": "node --check src/server.mjs && node --check src/executor.mjs && node --check src/adapters.mjs && node --check scripts/verify-compatibility.mjs && node --test tests/*.test.mjs && python3 -m unittest tests/test_package_tool.py && node scripts/verify-compatibility.mjs"
+    "check": "node --check src/server.mjs && node --check src/executor.mjs && node --check src/adapters.mjs && node --check scripts/verify-compatibility.mjs && node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py' && node scripts/verify-compatibility.mjs"
   }
 }
