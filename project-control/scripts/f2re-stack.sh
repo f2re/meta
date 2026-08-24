@@ -27,7 +27,7 @@ PIP_CACHE=""
 KAFEDRA_CACHE=""
 
 usage() {
-  cat <<'EOF'
+  cat <<'EOF_USAGE'
 F2RE Stack — локальная сборка всех offline bundle одной командой.
 
   ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--refs latest|pinned] [--source build|auto|download] [--output DIR] [--cache-dir DIR|--no-cache]
@@ -64,7 +64,7 @@ SHASUMS256.txt. Для planer-solving нужен Python 3.11+; сам Python н�
   F2RE_NODE_VERSION         версия Node для автозагрузки (24.19.0)
   F2RE_PYTHON_BIN           Python 3.11+ для сборки planer-solving
   F2RE_RELEASE_SIGNING_KEY  Ed25519 private key для локальной пересборки wrappers
-EOF
+EOF_USAGE
 }
 
 while [[ $# -gt 0 ]]; do
@@ -206,7 +206,8 @@ PY
 }
 
 download_atomic() {
-  local url="$1" target="$2" tmp="${target}.part.$$"
+  local url="$1" target="$2" tmp
+  tmp="${target}.part.$$"
   command -v curl >/dev/null 2>&1 || { echo "Для загрузки в кеш нужен curl" >&2; return 2; }
   rm -f "$tmp"
   curl -fL --retry 3 --retry-delay 1 "$url" -o "$tmp"
