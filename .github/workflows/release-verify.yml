@@ -5,10 +5,6 @@ on:
     workflows: ["Release"]
     types: [completed]
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/release-verify.yml"
 
 permissions:
   contents: read
@@ -16,7 +12,7 @@ permissions:
 
 jobs:
   verify:
-    name: Published assets, SHA-256 and manifest
+    name: Published assets, SHA-256 and full-stack manifest
     runs-on: ubuntu-24.04
     steps:
       - name: Resolve release source
@@ -65,7 +61,7 @@ jobs:
             --pattern 'SHA256SUMS' \
             --pattern '*.sha256'
 
-      - name: Verify complete asset contract from GitHub digests
+      - name: Verify complete v2 asset contract from GitHub digests
         run: |
           set -Eeuo pipefail
           VERSION="$(cat version.txt)"
@@ -77,43 +73,62 @@ jobs:
           assert release['tagName']==f'v{version}'
           assert release['isDraft'] is False and release['isPrerelease'] is False
           assets={x['name']:x for x in release['assets']}
-          required={
-            'SHA256SUMS','release-manifest.json','install-project-control.sh',
-            f'f2re-meta-{version}-all-astra-amd64.zip',f'f2re-meta-{version}-all-astra-amd64.zip.sha256',
-            f'f2re-meta-{version}-astra-1.7-amd64.tar.gz',f'f2re-meta-{version}-astra-1.7-amd64.tar.gz.sha256',
-            f'f2re-meta-{version}-astra-1.8-amd64.tar.gz',f'f2re-meta-{version}-astra-1.8-amd64.tar.gz.sha256',
-            'f2re-meta-astra-1.7-amd64.tar.gz','f2re-meta-astra-1.7-amd64.tar.gz.sha256',
-            'f2re-meta-astra-1.8-amd64.tar.gz','f2re-meta-astra-1.8-amd64.tar.gz.sha256',
-            f'project-control-{version}-linux-x64.tar.gz',f'project-control-{version}-linux-x64.tar.gz.sha256',
-            'project-control-linux-x64.tar.gz','project-control-linux-x64.tar.gz.sha256'}
-          assert set(assets)==required,(sorted(required-set(assets)),sorted(set(assets)-required))
+          assert len(assets)==39, len(assets)
+
           def digest(name):
-            value=(assets[name].get('digest') or '')
-            assert value.startswith('sha256:'),(name,value)
-            value=value.split(':',1)[1]
-            assert re.fullmatch(r'[0-9a-f]{64}',value)
-            return value
+              value=(assets[name].get('digest') or '')
+              assert value.startswith('sha256:'),(name,value)
+              value=value.split(':',1)[1]
+              assert re.fullmatch(r'[0-9a-f]{64}',value),(name,value)
+              return value
+
           manifest=json.loads((root/'release-manifest.json').read_text(encoding='utf-8'))
-          assert manifest['schema']=='f2re-github-release/v1' and manifest['version']==version and manifest['tag']==f'v{version}'
+          assert manifest['schema']=='f2re-github-release/v2'
+          assert manifest['version']==version and manifest['tag']==f'v{version}'
           assert re.fullmatch(r'[0-9a-f]{40}',manifest['sourceCommit'])
           assert {(x['version'],x['arch']) for x in manifest['targets']}=={('1.7','amd64'),('1.8','amd64')}
+          assert len(manifest['managedProjects'])==3
+          assert {x['projectId'] for x in manifest['managedProjects']}=={'docomator','planer-solving','kafedra-planner'}
+
           manifest_assets={x['name']:x for x in manifest['assets']}
+          assert len(manifest_assets)==19, len(manifest_assets)
           for name,item in manifest_assets.items():
-            assert item['sha256']==digest(name),(name,item['sha256'],digest(name))
-            assert item['bytes']==assets[name]['size']
-          for a,b in [(f'f2re-meta-{version}-astra-1.7-amd64.tar.gz','f2re-meta-astra-1.7-amd64.tar.gz'),(f'f2re-meta-{version}-astra-1.8-amd64.tar.gz','f2re-meta-astra-1.8-amd64.tar.gz'),(f'project-control-{version}-linux-x64.tar.gz','project-control-linux-x64.tar.gz')]:
-            assert digest(a)==digest(b),(a,b)
-          def sidecar(path):
-            parts=path.read_text(encoding='utf-8').strip().split(); assert len(parts)>=2
-            return parts[0],Path(parts[-1].lstrip('*')).name
-          for name in [f'f2re-meta-{version}-all-astra-amd64.zip.sha256',f'f2re-meta-{version}-astra-1.7-amd64.tar.gz.sha256',f'f2re-meta-{version}-astra-1.8-amd64.tar.gz.sha256','f2re-meta-astra-1.7-amd64.tar.gz.sha256','f2re-meta-astra-1.8-amd64.tar.gz.sha256',f'project-control-{version}-linux-x64.tar.gz.sha256','project-control-linux-x64.tar.gz.sha256']:
-            declared,target=sidecar(root/name); assert declared==digest(target),(name,target)
+              assert name in assets,name
+              assert item['sha256']==digest(name),(name,item['sha256'],digest(name))
+              assert item['bytes']==assets[name]['size'],(name,item['bytes'],assets[name]['size'])
+
+          required={
+              f'f2re-stack-{version}-astra-1.7-amd64.tar.gz',
+              f'f2re-stack-{version}-astra-1.8-amd64.tar.gz',
+              'f2re-stack-astra-1.7-amd64.tar.gz','f2re-stack-astra-1.8-amd64.tar.gz',
+              'docomator-project-control.f2re.zip','planer-solving-project-control.f2re.zip','kafedra-planner-project-control.f2re.zip',
+              'f2re-meta-astra-1.7-amd64.tar.gz','f2re-meta-astra-1.8-amd64.tar.gz',
+              'project-control-linux-x64.tar.gz','f2re-meta-all-astra-amd64.zip'}
+          assert required <= assets.keys(), sorted(required-assets.keys())
+
+          for target in manifest['targets']:
+              astra=target['version']
+              versioned=target['fullStack']; alias=f'f2re-stack-astra-{astra}-amd64.tar.gz'
+              assert digest(versioned)==digest(alias),(versioned,alias)
+              versioned=target['metaBundle']; alias=f'f2re-meta-astra-{astra}-amd64.tar.gz'
+              assert digest(versioned)==digest(alias),(versioned,alias)
+          assert digest(f'project-control-{version}-linux-x64.tar.gz')==digest('project-control-linux-x64.tar.gz')
+
           sums={}
           for raw in (root/'SHA256SUMS').read_text(encoding='utf-8').splitlines():
-            if raw.strip():
-              h,n=raw.split(None,1); sums[Path(n.strip().lstrip('*')).name]=h
+              if raw.strip():
+                  h,n=raw.split(None,1); sums[Path(n.strip().lstrip('*')).name]=h
+          assert set(sums)==set(assets)-{'SHA256SUMS'},(len(sums),len(assets))
           for name,h in sums.items(): assert h==digest(name),(name,h,digest(name))
-          print('release-verify-ok:',version,'assets=',len(assets),'manifest=',len(manifest_assets),'sums=',len(sums))
+
+          sidecars=list(root.glob('*.sha256'))
+          for path in sidecars:
+              parts=path.read_text(encoding='utf-8').strip().split(); assert len(parts)>=2,path.name
+              declared,target=parts[0],Path(parts[-1].lstrip('*')).name
+              assert target in assets,(path.name,target)
+              assert declared==digest(target),(path.name,target,declared,digest(target))
+
+          print('release-v2-ok:',version,'assets=',len(assets),'manifest=',len(manifest_assets),'sums=',len(sums),'sidecars=',len(sidecars))
           (root/'source-commit.txt').write_text(manifest['sourceCommit']+'\n',encoding='utf-8')
           PY
 
@@ -124,5 +139,5 @@ jobs:
           SOURCE_COMMIT="$(tr -d '[:space:]' < verify/source-commit.txt)"
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SOURCE_COMMIT" \
             -f state=success -f context='release/assets' \
-            -f description='17 release assets and GitHub SHA-256 digests verified' \
+            -f description='39 assets: controller, apps and Astra 1.7/1.8 stacks verified' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest"
