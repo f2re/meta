@@ -120,6 +120,33 @@ payload = json.loads(sys.argv[1])
 assert payload == {"ok": True, "version": sys.argv[2]}, payload
 PY
 
+TOKEN="$(awk -F= '$1=="PROJECT_CONTROL_ACCESS_TOKEN"{sub(/^[^=]*=/, ""); print; exit}' /etc/project-control/project-control.env)"
+[[ ${#TOKEN} -ge 24 ]]
+
+/opt/project-control/current/runtime/node/bin/node - "$TOKEN" <<'NODE'
+const http = require('node:http');
+const token = process.argv[2];
+function get(path, headers={}) {
+  return new Promise((resolve,reject)=>{
+    const req=http.get({host:'127.0.0.1',port:9090,path,headers,timeout:3000},res=>{
+      let body=''; res.setEncoding('utf8'); res.on('data',c=>body+=c);
+      res.on('end',()=>resolve({status:res.statusCode,body}));
+    });
+    req.on('error',reject); req.on('timeout',()=>{req.destroy();reject(new Error('timeout'))});
+  });
+}
+(async () => {
+  const ui = await get('/');
+  if (ui.status !== 200 || !ui.body.includes('Project Control')) throw new Error(`UI smoke failed: ${ui.status}`);
+  const projects = await get('/api/projects', {Authorization:`Bearer ${token}`});
+  if (projects.status !== 200) throw new Error(`API projects failed: ${projects.status} ${projects.body}`);
+  const payload = JSON.parse(projects.body);
+  const ids = payload.projects.map(p=>p.id).sort().join(',');
+  if (ids !== 'docomator,kafedra-planner,planer-solving') throw new Error(`unexpected project ids: ${ids}`);
+  console.log('ui-api-ipc-ok: / and authenticated /api/projects');
+})().catch((error) => { console.error(error); process.exit(1); });
+NODE
+
 kill -0 "$(cat "$STATE/executor.pid")"
 kill -0 "$(cat "$STATE/web.pid")"
-echo "deployment-smoke-ok: Project Control $VERSION installed; executor socket and /api/ping are live"
+echo "deployment-smoke-ok: Project Control $VERSION installed; UI, executor IPC and /api/ping are live"
