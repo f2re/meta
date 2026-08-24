@@ -4,6 +4,21 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.7] - 2026-08-24
+
+### Added
+
+- `f2re-stack.sh` получил постоянный cache root: `$XDG_CACHE_HOME/f2re-stack` либо `~/.cache/f2re-stack`, с переопределением через `F2RE_STACK_CACHE_DIR`/`--cache-dir`.
+- Между запусками сохраняются проверенный standalone Node.js, npm cache, pip cache и runtime cache Kafedra; `--no-cache` оставляет возможность полностью чистого одноразового build.
+- Повторный запуск локально перепроверяет cached Node archive по официальному `SHASUMS256.txt`, а повреждённый cache entry удаляет вместо молчаливого использования.
+
+### Changed
+
+- Node.js больше не скачивается заново при каждом `prepare`: после первой проверенной загрузки используется version/architecture-specific cache entry.
+- Docomator и Kafedra используют общий npm cache сборщика, `planer-solving` — постоянный pip download/wheel cache. Сам Python по-прежнему не загружается: выбирается уже установленный Python 3.11+.
+- `KAFEDRA_RUNTIME_CACHE_DIR` перенесён из удаляемого временного `WORK_DIR` в постоянный cache root, поэтому штатный offline-builder может переиспользовать runtime между сборками.
+- Project Control version: `0.5.6` → `0.5.7`.
+
 ## [0.5.6] - 2026-08-24
 
 ### Fixed
@@ -149,6 +164,7 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.7]: https://github.com/f2re/meta/releases/tag/v0.5.7
 [0.5.6]: https://github.com/f2re/meta/releases/tag/v0.5.6
 [0.5.5]: https://github.com/f2re/meta/releases/tag/v0.5.5
 [0.5.4]: https://github.com/f2re/meta/releases/tag/v0.5.4

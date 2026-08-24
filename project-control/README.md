@@ -15,7 +15,7 @@ Project Control — локальный сервис единого монито�
 
 Latest release: <https://github.com/f2re/meta/releases/latest>
 
-## Что показывает интерфейс 0.5.6
+## Что показывает интерфейс 0.5.7
 
 UI выполняет фактический runtime discovery:
 
@@ -93,11 +93,45 @@ git pull --ff-only
 5. `kafedra-planner`;
 6. единый переносимый F2RE Stack.
 
-**Docker не используется и не требуется. `gh` не требуется. Системный Node.js не требуется.** Standalone Node.js 24.19.0 загружается автоматически и проверяется по официальному `SHASUMS256.txt`.
+**Docker не используется и не требуется. `gh` не требуется. Системный Node.js не требуется.** Standalone Node.js 24.19.0 при первом запуске загружается и проверяется по официальному `SHASUMS256.txt`, а следующие сборки используют проверенную копию из постоянного кеша.
 
-Для `planer-solving` нужен Python 3.11+ с модулем `venv`. Скрипт самостоятельно ищет `/usr/bin/python3`, `python3.13`, `python3.12`, `python3.11`, затем `python3`; нужный интерпретатор можно задать через `F2RE_PYTHON_BIN`.
+Для `planer-solving` нужен Python 3.11+ с модулем `venv`. Скрипт самостоятельно ищет `/usr/bin/python3`, `python3.13`, `python3.12`, `python3.11`, затем `python3`; нужный интерпретатор можно задать через `F2RE_PYTHON_BIN`. Сам Python сборщик не скачивает; загружаемые пакеты `pip` сохраняются между запусками.
 
 Kafedra в локальном режиме собирается штатным `scripts/offline/build-bundle.sh` как runtime-offline package без Docker. Ядро приложения — календарь, задачи, данные, API, worker и миграции — работает из комплекта. OCR, Poppler и LibreOffice используются с целевой Astra, если установлены. Полный target-specific full-airgap пакет с `.deb`-слоем остаётся отдельным CI/download вариантом.
+
+### Постоянный кеш сборщика
+
+По умолчанию используется `$XDG_CACHE_HOME/f2re-stack`, а если `XDG_CACHE_HOME` не задан — `~/.cache/f2re-stack`. В кеше хранятся только повторно используемые инструменты и загрузки:
+
+- официальный Node.js archive, `SHASUMS256.txt` и распакованный runtime, раздельно по версии и архитектуре;
+- npm cache для сборок Docomator и Kafedra;
+- pip download/wheel cache для `planer-solving`;
+- runtime cache штатного offline-builder Kafedra.
+
+Перед повторным использованием Node.js его archive снова проверяется локально по SHA-256. Повреждённый или неполный cache entry автоматически удаляется и загружается заново. Поэтому повторный `prepare` не должен снова скачивать 30+ МБ Node.js без причины.
+
+Задать общий кеш, например на большом диске:
+
+```bash
+./project-control/scripts/f2re-stack.sh prepare --astra 1.7 --cache-dir /srv/f2re-build-cache
+# эквивалентно
+F2RE_STACK_CACHE_DIR=/srv/f2re-build-cache \
+  ./project-control/scripts/f2re-stack.sh prepare --astra 1.7
+```
+
+Для диагностической полностью чистой сборки:
+
+```bash
+./project-control/scripts/f2re-stack.sh prepare --astra 1.7 --no-cache
+```
+
+Очистка стандартного кеша выполняется явно оператором:
+
+```bash
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/f2re-stack"
+```
+
+Исходники проектов и итоговые release bundle этим кешем не подменяются: `main` всё равно разрешается заново перед каждым `--refs latest`, а `sourceCommit` проверяется как раньше.
 
 ### Воспроизводимый pinned-режим
 
