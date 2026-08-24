@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-MANAGED="$ROOT/config/managed-projects.json"
+MANAGED_TEMPLATE="$ROOT/config/managed-projects.json"
+MANAGED="$MANAGED_TEMPLATE"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 COMMAND="${1:-prepare}"
 [[ $# -eq 0 ]] || shift
 SOURCE_MODE="${F2RE_STACK_SOURCE_MODE:-build}"
+PROJECT_REF_MODE="${F2RE_PROJECT_REF_MODE:-latest}"
 TARGET_ASTRA_VERSION="${F2RE_TARGET_ASTRA_VERSION:-1.8}"
 OUT_DIR="${F2RE_STACK_OUT_DIR:-$ROOT/dist}"
 INPUT_DIR=""
@@ -19,18 +21,20 @@ usage() {
   cat <<'EOF'
 F2RE Stack — локальная сборка всех offline bundle одной командой.
 
-  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--source build|auto|download] [--output DIR]
-  ./scripts/f2re-stack.sh download [--astra 1.7|1.8] [--output DIR]
-  ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--output DIR]
+  ./scripts/f2re-stack.sh prepare [--astra 1.7|1.8] [--refs latest|pinned] [--source build|auto|download] [--output DIR]
+  ./scripts/f2re-stack.sh download [--astra 1.7|1.8] [--refs pinned] [--output DIR]
+  ./scripts/f2re-stack.sh build [--astra 1.7|1.8] [--refs latest|pinned] [--output DIR]
   ./scripts/f2re-stack.sh pack [--astra 1.7|1.8] [--input DIR] [--output DIR]
 
-prepare (по умолчанию) = build: прямо на текущей Linux build-машине получает
-закреплённые exact-SHA исходники docomator, planer-solving и kafedra-planner,
-собирает их вместе с meta и формирует один f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz.
-Docker не используется и не требуется.
+prepare (по умолчанию) = build + latest: перед сборкой читает defaultBranch каждого
+управляемого репозитория, разрешает текущий HEAD main в полный SHA, фиксирует этот
+снимок и собирает именно его. Поэтому новая версия проекта попадает в stack без
+ручного обновления verifiedCommit в meta.
 
---source auto: сначала ищет exact-SHA GitHub Actions artifacts и локально собирает
-только отсутствующие компоненты. --source download запрещает локальную сборку.
+--refs pinned использует SHA из config/managed-projects.json и нужен для строго
+воспроизводимого исторического/release build. --source auto сначала ищет artifacts
+для уже разрешённых SHA и локально собирает отсутствующие компоненты.
+Docker не используется и не требуется.
 
 Системный Node.js не требуется: официальный standalone Node.js автоматически
 скачивается и проверяется по SHASUMS256.txt. Для planer-solving нужен Python
@@ -39,6 +43,7 @@ Docker не используется и не требуется.
 Переменные:
   F2RE_TARGET_ASTRA_VERSION целевая Astra Linux (1.7 или 1.8; default 1.8)
   F2RE_STACK_SOURCE_MODE    build (default), auto или download
+  F2RE_PROJECT_REF_MODE     latest (default) или pinned
   NODE_RUNTIME_DIR          готовый автономный Linux Node.js runtime
   F2RE_NODE_VERSION         версия Node для автозагрузки (24.19.0)
   F2RE_PYTHON_BIN           Python 3.11+ для сборки planer-solving
@@ -49,6 +54,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --astra) [[ $# -ge 2 ]] || { echo "--astra требует 1.7 или 1.8" >&2; exit 2; }; TARGET_ASTRA_VERSION="$2"; shift 2 ;;
+    --refs) [[ $# -ge 2 ]] || { echo "--refs требует latest или pinned" >&2; exit 2; }; PROJECT_REF_MODE="$2"; shift 2 ;;
     --source) [[ $# -ge 2 ]] || { echo "--source требует значение" >&2; exit 2; }; SOURCE_MODE="$2"; shift 2 ;;
     --output) [[ $# -ge 2 ]] || { echo "--output требует DIR" >&2; exit 2; }; OUT_DIR="$2"; shift 2 ;;
     --input) [[ $# -ge 2 ]] || { echo "--input требует DIR" >&2; exit 2; }; INPUT_DIR="$2"; shift 2 ;;
@@ -61,9 +67,15 @@ done
 
 case "$COMMAND" in prepare|download|build|pack) ;; -h|--help) usage; exit 0 ;; *) echo "Неизвестная команда: $COMMAND" >&2; usage >&2; exit 2 ;; esac
 case "$SOURCE_MODE" in auto|download|build) ;; *) echo "--source: build, auto или download" >&2; exit 2 ;; esac
+case "$PROJECT_REF_MODE" in latest|pinned) ;; *) echo "--refs: latest или pinned" >&2; exit 2 ;; esac
 case "$TARGET_ASTRA_VERSION" in 1.7|1.8) ;; *) echo "--astra поддерживает только 1.7 или 1.8" >&2; exit 2 ;; esac
 [[ "$COMMAND" != download ]] || SOURCE_MODE=download
 [[ "$COMMAND" != build ]] || SOURCE_MODE=build
+if [[ "$SOURCE_MODE" == download && "$PROJECT_REF_MODE" == latest ]]; then
+  echo "Режим --source download требует --refs pinned: latest-снимок meta должен быть собран вместе с разрешёнными SHA." >&2
+  echo "Для актуальных main используйте обычный prepare/build либо --source auto." >&2
+  exit 2
+fi
 
 for cmd in python3 sha256sum tar gzip find git; do command -v "$cmd" >/dev/null 2>&1 || { echo "Не найдена команда: $cmd" >&2; exit 2; }; done
 META_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
@@ -76,6 +88,53 @@ mkdir -p "$OUT_DIR"
 if [[ -z "$WORK_DIR" ]]; then WORK_DIR="$(mktemp -d -t f2re-stack.XXXXXXXX)"; else mkdir -p "$WORK_DIR"; fi
 cleanup() { [[ "$KEEP_WORK" == true ]] || rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
+
+resolve_project_refs() {
+  local resolved="$WORK_DIR/managed-projects.resolved.json" refs="$WORK_DIR/project-refs.tsv"
+  if [[ "$PROJECT_REF_MODE" == pinned ]]; then
+    cp "$MANAGED_TEMPLATE" "$resolved"
+    MANAGED="$resolved"
+    echo "==> Проекты: используем pinned SHA из managed-projects.json"
+    return 0
+  fi
+
+  : > "$refs"
+  echo "==> Проекты: определяем актуальные HEAD defaultBranch"
+  while IFS=$'\t' read -r id repository branch; do
+    local sha
+    sha="$(git ls-remote "$repository" "refs/heads/$branch" | awk 'NR == 1 {print $1}')"
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || {
+      echo "$id: не удалось определить $repository/$branch" >&2
+      return 2
+    }
+    printf '%s\t%s\n' "$id" "$sha" >> "$refs"
+    printf '    %-18s %s @ %s\n' "$id" "$branch" "$sha"
+  done < <(python3 - "$MANAGED_TEMPLATE" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1],encoding='utf-8'))
+for p in m['projects']:
+    print('\t'.join((p['projectId'],p['repository'],p.get('defaultBranch') or 'main')))
+PY
+)
+
+  python3 - "$MANAGED_TEMPLATE" "$refs" "$resolved" <<'PY'
+import datetime,json,sys
+source,refs_path,target=sys.argv[1:]
+manifest=json.load(open(source,encoding='utf-8'))
+refs={}
+with open(refs_path,encoding='utf-8') as stream:
+    for line in stream:
+        project_id,sha=line.rstrip('\n').split('\t',1)
+        refs[project_id]=sha
+for project in manifest['projects']:
+    project['verifiedCommit']=refs[project['projectId']]
+manifest['verifiedAt']=datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+with open(target,'w',encoding='utf-8') as stream:
+    json.dump(manifest,stream,ensure_ascii=False,indent=2)
+    stream.write('\n')
+PY
+  MANAGED="$resolved"
+}
 
 json_projects() {
   python3 - "$MANAGED" <<'PY'
@@ -183,20 +242,30 @@ clone_exact() {
   git -C "$dest" remote add origin "https://github.com/$repo.git"
   git -C "$dest" fetch -q --depth=1 origin "$commit"
   git -C "$dest" checkout -q --detach FETCH_HEAD
-  [[ "$(git -C "$dest" rev-parse HEAD)" == "$commit" ]] || { echo "$repo: checkout не совпал с pinned SHA" >&2; return 2; }
+  [[ "$(git -C "$dest" rev-parse HEAD)" == "$commit" ]] || { echo "$repo: checkout не совпал с resolved SHA" >&2; return 2; }
+}
+
+source_version() {
+  local src="$1"
+  if [[ -f "$src/VERSION" ]]; then tr -d '[:space:]' < "$src/VERSION"
+  elif [[ -f "$src/package.json" ]]; then python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("version","unknown"))' "$src/package.json"
+  else printf 'unknown\n'
+  fi
 }
 
 build_meta() {
   local dest="$1" runtime="$2"
   mkdir -p "$dest"
   echo "==> meta: локальная сборка Astra $TARGET_ASTRA_VERSION meta-bundle"
-  OUT_DIR="$dest" NODE_RUNTIME_DIR="$runtime" TARGET_ASTRA_VERSION="$TARGET_ASTRA_VERSION" "$ROOT/scripts/build-meta-bundle.sh" >/dev/null
+  OUT_DIR="$dest" NODE_RUNTIME_DIR="$runtime" TARGET_ASTRA_VERSION="$TARGET_ASTRA_VERSION" \
+    F2RE_MANAGED_PROJECTS_FILE="$MANAGED" "$ROOT/scripts/build-meta-bundle.sh" >/dev/null
 }
 
 build_docomator() {
   local repo="$1" commit="$2" dest="$3" runtime="$4" src="$WORK_DIR/src-docomator"
   echo "==> docomator: локальная сборка $commit"
   clone_exact "$repo" "$commit" "$src"
+  echo "    docomator: версия $(source_version "$src"), commit $commit"
   mkdir -p "$dest"
   (cd "$src" && PATH="$runtime/bin:$PATH" PROJECT_CONTROL_PYTHON_BIN=python3 \
     ./scripts/project-control/build-bundle.sh \
@@ -208,6 +277,7 @@ build_planer() {
   local repo="$1" commit="$2" dest="$3" src="$WORK_DIR/src-planer" venv="$WORK_DIR/planer-venv" python_bin
   echo "==> planer-solving: локальная сборка $commit"
   clone_exact "$repo" "$commit" "$src"
+  echo "    planer-solving: версия $(source_version "$src"), commit $commit"
   require_build_python
   python_bin="$BUILD_PYTHON_RESOLVED"
   rm -rf "$venv"
@@ -221,6 +291,7 @@ build_kafedra() {
   local repo="$1" commit="$2" dest="$3" runtime="$4" src="$WORK_DIR/src-kafedra" archive package
   echo "==> kafedra-planner: локальная runtime-offline сборка $commit (без Docker)"
   clone_exact "$repo" "$commit" "$src"
+  echo "    kafedra-planner: версия $(source_version "$src"), commit $commit"
   mkdir -p "$dest"
   (cd "$src" && \
     PATH="$runtime/bin:$PATH" \
@@ -254,14 +325,16 @@ build_project() {
 
 acquire_all() {
   local mode="$1" runtime=""
+  resolve_project_refs
   rm -rf "$INPUT_DIR"; mkdir -p "$INPUT_DIR"
+  cp "$MANAGED" "$INPUT_DIR/managed-projects.resolved.json"
   if [[ "$mode" == build ]]; then
     require_node_runtime
     runtime="$NODE_RUNTIME_RESOLVED"
   fi
 
   local meta_ok=false
-  if [[ "$mode" != build ]]; then
+  if [[ "$mode" != build && "$PROJECT_REF_MODE" == pinned ]]; then
     local meta_artifact="f2re-meta-astra-${TARGET_ASTRA_VERSION}-amd64"
     echo "==> meta: поиск проверенного GitHub Actions artifact $meta_artifact для $META_COMMIT"
     if artifact_for_commit "f2re/meta" "$meta_artifact" "$META_COMMIT" "$INPUT_DIR"; then meta_ok=true; else
@@ -297,6 +370,9 @@ acquire_all() {
 
 pack_all() {
   [[ -d "$INPUT_DIR" ]] || { echo "Нет каталога входных bundle: $INPUT_DIR" >&2; exit 3; }
+  if [[ -f "$INPUT_DIR/managed-projects.resolved.json" ]]; then
+    MANAGED="$INPUT_DIR/managed-projects.resolved.json"
+  fi
   python3 "$ROOT/scripts/stack_tool.py" pack "$INPUT_DIR" "$MANAGED" "$OUT_DIR" \
     --version "$VERSION" --meta-commit "$META_COMMIT" --astra-version "$TARGET_ASTRA_VERSION"
 }
