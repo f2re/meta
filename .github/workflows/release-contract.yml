@@ -1,0 +1,101 @@
+name: Release Contract
+
+on:
+  pull_request:
+    paths:
+      - "README.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-contract.yml"
+      - ".github/workflows/release-verify.yml"
+      - "project-control/VERSION"
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-contract.yml"
+      - ".github/workflows/release-verify.yml"
+      - "project-control/VERSION"
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Latest release metadata and download contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(tr -d '[:space:]' < project-control/VERSION)"
+          TAG="v$VERSION"
+          gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets > release.json
+          cat release.json
+
+          python3 - "$VERSION" release.json <<'PY'
+          import json, sys
+          version=sys.argv[1]
+          data=json.load(open(sys.argv[2],encoding='utf-8'))
+          assert data['tagName']==f'v{version}', data
+          assert data['isDraft'] is False, data
+          assert data['isPrerelease'] is False, data
+          names={asset['name'] for asset in data.get('assets',[])}
+          required={
+              'SHA256SUMS',
+              'release-manifest.json',
+              f'f2re-meta-{version}-all-astra-amd64.zip',
+              f'f2re-meta-{version}-all-astra-amd64.zip.sha256',
+              f'f2re-meta-{version}-astra-1.7-amd64.tar.gz',
+              f'f2re-meta-{version}-astra-1.7-amd64.tar.gz.sha256',
+              f'f2re-meta-{version}-astra-1.8-amd64.tar.gz',
+              f'f2re-meta-{version}-astra-1.8-amd64.tar.gz.sha256',
+              'f2re-meta-astra-1.7-amd64.tar.gz',
+              'f2re-meta-astra-1.7-amd64.tar.gz.sha256',
+              'f2re-meta-astra-1.8-amd64.tar.gz',
+              'f2re-meta-astra-1.8-amd64.tar.gz.sha256',
+              f'project-control-{version}-linux-x64.tar.gz',
+              f'project-control-{version}-linux-x64.tar.gz.sha256',
+              'project-control-linux-x64.tar.gz',
+              'project-control-linux-x64.tar.gz.sha256',
+              'install-project-control.sh',
+          }
+          missing=required-names
+          extra=names-required
+          print('published assets:', len(names))
+          print('missing:', sorted(missing))
+          print('extra:', sorted(extra))
+          assert not missing, f'missing release assets: {sorted(missing)}'
+          PY
+
+      - name: Download small integrity metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(tr -d '[:space:]' < project-control/VERSION)"
+          TAG="v$VERSION"
+          mkdir verify
+          gh release download "$TAG" --dir verify \
+            --pattern 'release-manifest.json' \
+            --pattern 'SHA256SUMS' \
+            --pattern '*.sha256'
+          find verify -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
+          cat verify/release-manifest.json
+
+          python3 - "$VERSION" verify/release-manifest.json <<'PY'
+          import json,sys
+          data=json.load(open(sys.argv[2],encoding='utf-8'))
+          assert data['schema']=='f2re-github-release/v1'
+          assert data['version']==sys.argv[1]
+          assert data['tag']==f"v{sys.argv[1]}"
+          targets={(x['version'],x['arch']) for x in data['targets']}
+          assert targets=={('1.7','amd64'),('1.8','amd64')}, targets
+          print('manifest-ok:', data['tag'], sorted(targets), 'assets=', len(data['assets']))
+          PY
