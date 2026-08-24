@@ -4,6 +4,22 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.1] - 2026-08-24
+
+### Fixed
+
+- Исправлен фатальный сбой интерфейса `keyDialog.showModal is not a function`: перед `app.js` загружается локальный compatibility layer для браузеров/окружений без полного `HTMLDialogElement` API.
+- Fallback поддерживает открытие и закрытие окна ключа, Escape и блокировку фоновой прокрутки, не вмешиваясь в нативный `<dialog>` там, где он поддерживается.
+- Убран лишний `404` при загрузке страницы за счёт встроенной favicon, чтобы консоль не маскировала реальные ошибки API/UI.
+
+### Added
+
+- Контрактные Node.js-тесты для native/fallback dialog flow и порядка загрузки frontend-скриптов.
+
+### Changed
+
+- Project Control version: `0.5.0` → `0.5.1`.
+
 ## [0.5.0] - 2026-08-24
 
 ### Added
@@ -51,4 +67,5 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.1]: https://github.com/f2re/meta/releases/tag/v0.5.1
 [0.5.0]: https://github.com/f2re/meta/releases/tag/v0.5.0
