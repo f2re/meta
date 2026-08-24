@@ -10,7 +10,6 @@
   <a href="https://github.com/f2re/meta/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/f2re/meta?display_name=tag&sort=semver"></a>
   <a href="https://github.com/f2re/meta/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/f2re/meta/total"></a>
   <img alt="Astra Linux" src="https://img.shields.io/badge/Astra%20Linux-1.7%20%7C%201.8-2f6f9f">
-  <img alt="SemVer" src="https://img.shields.io/badge/versioning-SemVer-3f51b5">
   <img alt="Node.js 24" src="https://img.shields.io/badge/runtime-Node.js%2024-43853d">
 </p>
 
@@ -24,11 +23,10 @@
 | **Meta bundle** | Astra Linux 1.8 amd64 | [f2re-meta-astra-1.8-amd64.tar.gz](https://github.com/f2re/meta/releases/latest/download/f2re-meta-astra-1.8-amd64.tar.gz) | [SHA-256](https://github.com/f2re/meta/releases/latest/download/f2re-meta-astra-1.8-amd64.tar.gz.sha256) |
 | **Portable controller** | Linux x64 | [project-control-linux-x64.tar.gz](https://github.com/f2re/meta/releases/latest/download/project-control-linux-x64.tar.gz) | [SHA-256](https://github.com/f2re/meta/releases/latest/download/project-control-linux-x64.tar.gz.sha256) |
 | **Все release assets** | 1.7 + 1.8 | [GitHub Releases](https://github.com/f2re/meta/releases/latest) | [SHA256SUMS](https://github.com/f2re/meta/releases/latest/download/SHA256SUMS) |
-| **Machine-readable inventory** | Release | [release-manifest.json](https://github.com/f2re/meta/releases/latest/download/release-manifest.json) | SHA внутри manifest + `SHA256SUMS` |
 
-Каждый стабильный выпуск имеет тег `vX.Y.Z`, versioned assets, общий `SHA256SUMS` и `release-manifest.json`. Уже опубликованный SemVer release не перезаписывается.
+Каждый стабильный выпуск имеет тег `vX.Y.Z`, versioned assets, общий `SHA256SUMS` и `release-manifest.json`.
 
-## Быстрая установка
+## Быстрая установка Project Control
 
 Astra Linux 1.7:
 
@@ -55,13 +53,13 @@ UI: `http://<server>:9090/` либо nginx path prefix, например `/proje
 
 ## Проверяемые платформы
 
-| Платформа | Архитектура | CI | Deployment smoke | Release asset |
-|---|---:|---|---|---|
-| Astra Linux Special Edition **1.7** | amd64 | ✅ | официальный `astra/ubi17:1.7.5` | ✅ |
-| Astra Linux Special Edition **1.8** | amd64 | ✅ | официальный `astra/ubi18-python311` | ✅ |
-| Debian | amd64 | совместимая база | unit/installer contracts | portable controller |
+| Платформа | Архитектура | CI | Deployment smoke |
+|---|---:|---|---|
+| Astra Linux Special Edition **1.7** | amd64 | ✅ | официальный `astra/ubi17:1.7.5` |
+| Astra Linux Special Edition **1.8** | amd64 | ✅ | официальный `astra/ubi18-python311` |
+| Debian | amd64 | совместимая база | unit/installer contracts |
 
-CI проверяет не только архив контроллера: выполняются unit/contracts, реальная локальная сборка полного F2RE Stack без Docker, а затем распаковка и deployment smoke meta-bundle в обеих ветках Astra.
+CI выполняет unit/contracts, реальную локальную сборку полного F2RE Stack без Docker и deployment smoke meta-bundle в обеих ветках Astra.
 
 ## Что умеет Project Control
 
@@ -70,7 +68,6 @@ CI проверяет не только архив контроллера: вы�
 - сканирует TCP LISTEN через `ss`;
 - разбирает nginx `server_name`, `location`, `proxy_pass`, `client_max_body_size`;
 - проверяет HTTP health на фактическом порту;
-- показывает версию, путь, службы, proxy route и причины деградации;
 - принимает большие `.f2re.zip` чанками и выполняет update отдельной job;
 - сохраняет privilege boundary: web service непривилегирован, root executor доступен только через Unix socket;
 - применяет только статически allowlisted native installers.
@@ -92,23 +89,7 @@ flowchart LR
     A --> H[systemd + HTTP health]
 ```
 
-## Release pipeline
-
-```mermaid
-flowchart LR
-    M[main + VERSION] --> C[Contract tests]
-    C --> L[Local full-stack build without Docker]
-    L --> A17[Astra 1.7 build]
-    L --> A18[Astra 1.8 build]
-    A17 --> T17[UBI 1.7 deployment smoke]
-    A18 --> T18[UBI 1.8 deployment smoke]
-    T17 --> R[GitHub Release vX.Y.Z]
-    T18 --> R
-    R --> S[SHA256SUMS]
-    R --> J[release-manifest.json]
-```
-
-## F2RE Stack — вся система одним махом
+## F2RE Stack — актуальные версии всей системы одним запуском
 
 На обычной Linux build-машине с интернетом:
 
@@ -122,24 +103,37 @@ git pull --ff-only
 ./project-control/scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
-Это теперь основной режим: `prepare` по умолчанию локально собирает **meta + docomator + planer-solving + kafedra-planner** из закреплённых exact SHA и затем упаковывает единый stack.
+Обычный `prepare` теперь означает **`--source build --refs latest`**. Он не берёт старые `verifiedCommit` как «последние версии». В начале запуска скрипт получает текущий HEAD `main` каждого управляемого репозитория, фиксирует эти SHA в `managed-projects.resolved.json` и собирает весь stack именно из этого frozen snapshot.
 
-**Docker не нужен. GitHub CLI не нужен. Системный Node.js не нужен.** Скрипт сам скачивает и проверяет standalone Node.js 24.19.0. Для `planer-solving` нужен `python3-venv`; для runtime — `curl` и `xz`.
+Это различает два понятия:
 
-Kafedra локально собирается штатным runtime-offline builder без контейнера. Это полноценное ядро приложения с автономным Node.js. OCR/Poppler/LibreOffice используются с целевой ОС, если установлены. Полный target-specific `full-airgap` Kafedra с `.deb`-слоем остаётся доступным как CI/download variant.
+- `latest` — актуальный `main` на момент старта сборки;
+- `pinned` — сохранённый compatibility snapshot из `config/managed-projects.json` для воспроизводимости.
 
-Если нужны готовые exact-SHA CI artifacts с локальным fallback:
+Для воспроизведения зафиксированной матрицы:
+
+```bash
+./project-control/scripts/f2re-stack.sh prepare --astra 1.7 --refs pinned
+```
+
+Перед сборкой скрипт показывает разрешённые SHA, а после clone каждого проекта — фактические `VERSION` и commit. Снимок тех же SHA встраивается в meta/controller bundle, поэтому Project Control и собранные приложения используют одну матрицу.
+
+**Docker не нужен. GitHub CLI не нужен. Системный Node.js не нужен.** Скрипт скачивает и проверяет standalone Node.js 24.19.0. Для `planer-solving` нужен Python 3.11+ с `venv`.
+
+Kafedra локально собирается штатным runtime-offline builder без контейнера. OCR/Poppler/LibreOffice используются с целевой ОС, если установлены. Полный target-specific `full-airgap` Kafedra с `.deb`-слоем остаётся отдельным CI/download вариантом.
+
+Artifact-first для актуальных SHA:
 
 ```bash
 cd project-control
 gh auth login
-./scripts/f2re-stack.sh prepare --astra 1.7 --source auto
+./scripts/f2re-stack.sh prepare --astra 1.7 --source auto --refs latest
 ```
 
-Если нужны только готовые artifacts и локальная сборка запрещена:
+Только ранее зафиксированные exact-SHA artifacts:
 
 ```bash
-./scripts/f2re-stack.sh prepare --astra 1.7 --source download
+./scripts/f2re-stack.sh prepare --astra 1.7 --source download --refs pinned
 ```
 
 Подробно: [`project-control/docs/STACK.md`](project-control/docs/STACK.md).
@@ -152,17 +146,11 @@ gh auth login
 | Борис по парам | [`f2re/planer-solving`](https://github.com/f2re/planer-solving) | `planer-solving-v1` | `planner-solving-offline-v3` |
 | Кафедра Planner | [`f2re/kafedra-planner`](https://github.com/f2re/kafedra-planner) | `kafedra-planner-v1` | `kafedra-full-airgap-v2` / `kafedra-runtime-offline-v1` |
 
-Exact `verifiedCommit`, CI artifact names и deployment contract находятся в [`project-control/config/managed-projects.json`](project-control/config/managed-projects.json).
+`config/managed-projects.json` хранит adapter/release contract и воспроизводимый `verifiedCommit`; обычный stack дополнительно создаёт resolved snapshot текущих `main`.
 
 ## Версионирование
 
-Проект использует **Semantic Versioning**.
-
-- `MAJOR` — несовместимый API/adapter/deployment contract;
-- `MINOR` — новая совместимая возможность или поддерживаемая платформа;
-- `PATCH` — совместимое исправление.
-
-История: [`CHANGELOG.md`](CHANGELOG.md). Порядок выпуска: [`docs/RELEASING.md`](docs/RELEASING.md).
+Проект использует Semantic Versioning. История: [`CHANGELOG.md`](CHANGELOG.md). Порядок выпуска: [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Безопасность и качество
 
