@@ -8,7 +8,7 @@
       "displayName": "Оформлятор",
       "repository": "https://github.com/f2re/docomator",
       "defaultBranch": "main",
-      "verifiedCommit": "3a3898c9d7981dad9f31fcb060a3e1755b78497a",
+      "verifiedCommit": "c0269c38a0e00a3c662cfa2ee53e9ea0b04e3aff",
       "adapter": "docomator-v1",
       "nativeBundleFormat": "docomator-offline-v2",
       "currentPath": "/opt/docomator/current",
