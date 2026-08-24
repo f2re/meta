@@ -1,13 +1,15 @@
 import path from "node:path";
 
+const PREFIX_RELATIVE_ASSETS = ["app.js", "dialog-polyfill.js", "styles.css", "favicon.ico"];
+
 export function normalizeRequestPath(pathname) {
   const value = String(pathname || "/");
   if (value === "/") return "/";
   const apiIndex = value.indexOf("/api/");
   if (apiIndex >= 0) return value.slice(apiIndex);
-  if (value.endsWith("/app.js")) return "/app.js";
-  if (value.endsWith("/styles.css")) return "/styles.css";
-  if (value.endsWith("/favicon.ico")) return "/favicon.ico";
+  for (const asset of PREFIX_RELATIVE_ASSETS) {
+    if (value.endsWith(`/${asset}`)) return `/${asset}`;
+  }
   if (value.endsWith("/")) return "/";
   return value;
 }

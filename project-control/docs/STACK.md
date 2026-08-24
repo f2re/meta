@@ -8,7 +8,10 @@
 
 ```bash
 git clone https://github.com/f2re/meta.git
-cd meta/project-control
+cd meta
+git pull --ff-only
+git rev-parse HEAD
+cd project-control
 gh auth login
 
 ./scripts/f2re-stack.sh prepare --astra 1.7
@@ -18,12 +21,16 @@ gh auth login
 
 `prepare` работает в режиме `auto`:
 
-1. читает `config/managed-projects.json`;
-2. ищет Project Control meta artifact **именно выбранной Astra** и artifacts закреплённых commit SHA подпроектов;
-3. проверяет source commit, adapter, native bundle format, wrapper SHA-256 и SHA/size payload;
-4. если конкретного CI artifact нет, пересобирает только этот компонент;
-5. проверяет, что `meta-release.json.target.version` совпадает с `--astra`;
-6. формирует один переносимый архив.
+1. фиксирует exact SHA текущего локального checkout `meta`;
+2. читает `config/managed-projects.json`;
+3. ищет Project Control meta artifact **именно выбранной Astra** и artifacts закреплённых commit SHA подпроектов;
+4. проверяет source commit, adapter, native bundle format, wrapper SHA-256 и SHA/size payload;
+5. если конкретного CI artifact нет, пересобирает только этот компонент;
+6. проверяет, что `meta-release.json.target.version` совпадает с `--astra`;
+7. формирует один переносимый архив.
+
+Скрипт не переключает локальный checkout на более новый `main` автоматически. Поэтому SHA в строке
+`meta: поиск ... для <SHA>` является источником истины для конкретной сборки. Если нужен актуальный `main`, перед запуском выполните `git pull --ff-only`.
 
 Результат:
 
@@ -50,7 +57,7 @@ sudo ./deploy-stack.sh
 2. устанавливает/обновляет Project Control;
 3. ждёт `/api/ping`;
 4. получает локальный access token из `/etc/project-control/project-control.env`;
-5. загружает `docomator` через штатный Project Control API;
+5. загружает `docomator` чанками через штатный Project Control API и ждёт отдельную apply-job;
 6. требует точную активную версию и зелёный health;
 7. аналогично обновляет `planer-solving`;
 8. для первой установки `kafedra-planner` готовит непересекающийся co-location profile;
@@ -86,6 +93,12 @@ sudo F2RE_KAFEDRA_PORT=18090 F2RE_KAFEDRA_LLM_PORT=18091 ./deploy-stack.sh
 ./scripts/f2re-stack.sh pack --astra 1.7
 ```
 
+Или одной командой без fallback build:
+
+```bash
+./scripts/f2re-stack.sh prepare --astra 1.7 --source download
+```
+
 Если exact-SHA artifact отсутствует, `download` завершается ошибкой и не подменяет его более новым release.
 
 Принудительная пересборка:
@@ -112,7 +125,9 @@ sudo F2RE_KAFEDRA_PORT=18090 F2RE_KAFEDRA_LLM_PORT=18091 ./deploy-stack.sh
 - `planer-solving`: `offline/build_project_control_bundle.sh`;
 - `kafedra-planner`: native full air-gap archive через его штатный builder, wrapper — через `project-control-package.py` с pinned SHA.
 
-Для `meta`/`docomator` автоматически загружается официальный standalone Node.js и проверяется по `SHASUMS256.txt`, если `NODE_RUNTIME_DIR` не задан. Для полной локальной сборки `kafedra-planner` нужен Docker.
+Для `meta`/`docomator` автоматически загружается официальный standalone Node.js и проверяется по `SHASUMS256.txt`, если `NODE_RUNTIME_DIR` не задан. Путь runtime передаётся builder-ам через отдельное состояние скрипта, поэтому диагностический вывод `sha256sum` не может быть ошибочно принят за путь Node.js. Системный `node` на build-host не требуется.
+
+Для полной локальной сборки `kafedra-planner` нужен Docker.
 
 ## Требования к online build/download машине
 
@@ -120,9 +135,35 @@ sudo F2RE_KAFEDRA_PORT=18090 F2RE_KAFEDRA_LLM_PORT=18091 ./deploy-stack.sh
 
 - Linux x86-64;
 - `git`, `python3`, `tar`, `gzip`, `sha256sum`;
-- `gh` с `gh auth login`.
+- `gh` с `gh auth login` для загрузки CI artifacts.
 
-Для fallback build дополнительно могут понадобиться `curl`, `xz`, `python3-venv`, Docker.
+Если exact artifact отсутствует и включён `auto`, fallback build может дополнительно потребовать:
+
+- `curl` и `xz` — автозагрузка standalone Node.js;
+- `python3-venv` — локальная сборка `planer-solving`;
+- Docker — локальная full offline сборка `kafedra-planner`.
+
+Если эти зависимости ставить нельзя, используйте `--source download`: тогда отсутствие exact-SHA artifact будет явной ошибкой вместо попытки локальной сборки.
+
+## Диагностика типовых проблем
+
+Если вывод содержит старый SHA `meta`, обновите локальный репозиторий:
+
+```bash
+cd /path/to/meta
+git status --short
+git pull --ff-only
+git rev-parse HEAD
+```
+
+Если на старой версии скрипта после успешной загрузки Node.js появлялась ошибка
+`Для проверки compatibility manifest нужен Node.js`, обновите `meta`: в Project Control 0.5.2 исправлено смешивание диагностического stdout `sha256sum` с путём runtime.
+
+Для сохранения временного каталога и детального разбора fallback build:
+
+```bash
+./scripts/f2re-stack.sh prepare --astra 1.7 --keep-work
+```
 
 ## Состав stack
 
@@ -168,6 +209,7 @@ sudo ./deploy-stack.sh --url http://127.0.0.1:19090
 
 Stack не запускает native installers подпроектов напрямую. Он передаёт тот же `*.f2re.zip`, что UI, сохраняя:
 
+- chunked upload и отдельную apply-job;
 - статический adapter allowlist;
 - проверку wrapper/payload;
 - Ed25519 policy;

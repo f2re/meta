@@ -12,6 +12,7 @@ INPUT_DIR=""
 WORK_DIR="${F2RE_STACK_WORK_DIR:-}"
 KEEP_WORK=false
 NODE_VERSION="${F2RE_NODE_VERSION:-24.15.0}"
+NODE_RUNTIME_RESOLVED=""
 
 usage() {
   cat <<'EOF'
@@ -26,6 +27,9 @@ prepare (по умолчанию): для каждого компонента с
 точный проверенный GitHub Actions artifact закреплённого commit; если artifact
 ещё недоступен, пересобирает только этот компонент локально. Затем создаёт один
 f2re-stack-*-astra-<1.7|1.8>-amd64.tar.gz для переноса в закрытый контур.
+
+Системный Node.js не требуется: для локального fallback build официальный
+standalone Node.js автоматически скачивается и проверяется по SHASUMS256.txt.
 
 Переменные:
   F2RE_TARGET_ASTRA_VERSION целевая Astra Linux (1.7 или 1.8; default 1.8)
@@ -101,9 +105,11 @@ PY
 }
 
 ensure_node_runtime() {
+  NODE_RUNTIME_RESOLVED=""
   if [[ -n "${NODE_RUNTIME_DIR:-}" ]]; then
     [[ -x "$NODE_RUNTIME_DIR/bin/node" ]] || { echo "NODE_RUNTIME_DIR не содержит bin/node" >&2; return 2; }
-    printf '%s\n' "$NODE_RUNTIME_DIR"; return 0
+    NODE_RUNTIME_RESOLVED="$(cd "$NODE_RUNTIME_DIR" && pwd -P)"
+    return 0
   fi
   for cmd in curl xz; do command -v "$cmd" >/dev/null 2>&1 || { echo "Для автозагрузки Node.js нужен $cmd" >&2; return 2; }; done
   local machine node_arch archive base cache extracted
@@ -113,7 +119,7 @@ ensure_node_runtime() {
   base="https://nodejs.org/dist/v${NODE_VERSION}"
   cache="$WORK_DIR/node-runtime"
   mkdir -p "$cache"
-  if [[ ! -f "$cache/$archive" ]]; then
+  if [[ ! -f "$cache/$archive" || ! -f "$cache/SHASUMS256.txt" ]]; then
     echo "==> Node.js $NODE_VERSION: загрузка автономного runtime" >&2
     curl -fL --retry 3 "$base/$archive" -o "$cache/$archive"
     curl -fL --retry 3 "$base/SHASUMS256.txt" -o "$cache/SHASUMS256.txt"
@@ -121,8 +127,17 @@ ensure_node_runtime() {
   (cd "$cache" && grep -E "  ${archive}$" SHASUMS256.txt | sha256sum -c --strict -)
   extracted="$cache/node-v${NODE_VERSION}-linux-${node_arch}"
   [[ -d "$extracted" ]] || tar -xJf "$cache/$archive" -C "$cache"
-  [[ -x "$extracted/bin/node" && -x "$extracted/bin/npm" ]] || return 2
-  printf '%s\n' "$extracted"
+  [[ -x "$extracted/bin/node" && -x "$extracted/bin/npm" ]] || { echo "Скачанный Node.js runtime неполон: $extracted" >&2; return 2; }
+  NODE_RUNTIME_RESOLVED="$extracted"
+}
+
+require_node_runtime() {
+  if [[ -z "$NODE_RUNTIME_RESOLVED" ]]; then ensure_node_runtime; fi
+  [[ -n "$NODE_RUNTIME_RESOLVED" && "$NODE_RUNTIME_RESOLVED" != *$'\n'* && -x "$NODE_RUNTIME_RESOLVED/bin/node" ]] || {
+    echo "Не удалось однозначно определить автономный Node.js runtime." >&2
+    return 2
+  }
+  echo "    Node runtime: $NODE_RUNTIME_RESOLVED ($("$NODE_RUNTIME_RESOLVED/bin/node" --version))" >&2
 }
 
 clone_exact() {
@@ -201,7 +216,10 @@ build_project() {
 acquire_all() {
   local mode="$1" runtime=""
   rm -rf "$INPUT_DIR"; mkdir -p "$INPUT_DIR"
-  if [[ "$mode" == build ]]; then runtime="$(ensure_node_runtime)"; fi
+  if [[ "$mode" == build ]]; then
+    require_node_runtime
+    runtime="$NODE_RUNTIME_RESOLVED"
+  fi
 
   local meta_ok=false
   if [[ "$mode" != build ]]; then
@@ -212,7 +230,10 @@ acquire_all() {
       echo "    artifact не найден — будет локальная сборка"
     fi
   fi
-  if [[ "$meta_ok" == false ]]; then [[ -n "$runtime" ]] || runtime="$(ensure_node_runtime)"; build_meta "$INPUT_DIR" "$runtime"; fi
+  if [[ "$meta_ok" == false ]]; then
+    if [[ -z "$runtime" ]]; then require_node_runtime; runtime="$NODE_RUNTIME_RESOLVED"; fi
+    build_meta "$INPUT_DIR" "$runtime"
+  fi
 
   while IFS=$'\t' read -r id repo commit artifact_template; do
     local ok=false artifact
@@ -225,7 +246,7 @@ acquire_all() {
       fi
     fi
     if [[ "$ok" == false ]]; then
-      [[ -n "$runtime" ]] || runtime="$(ensure_node_runtime)"
+      if [[ -z "$runtime" ]]; then require_node_runtime; runtime="$NODE_RUNTIME_RESOLVED"; fi
       build_project "$id" "$repo" "$commit" "$INPUT_DIR" "$runtime"
     fi
   done < <(json_projects)

@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const source = await readFile(new URL("../scripts/f2re-stack.sh", import.meta.url), "utf8");
+
+test("downloaded Node runtime is passed via a dedicated variable, not command-substitution stdout", () => {
+  assert.match(source, /NODE_RUNTIME_RESOLVED=""/);
+  assert.match(source, /NODE_RUNTIME_RESOLVED="\$extracted"/);
+  assert.doesNotMatch(source, /runtime="\$\(ensure_node_runtime\)"/);
+  assert.doesNotMatch(source, /runtime=\$\(ensure_node_runtime\)/);
+});
+
+test("stack validates the resolved runtime before build", () => {
+  assert.match(source, /require_node_runtime\(\)/);
+  assert.match(source, /-x "\$NODE_RUNTIME_RESOLVED\/bin\/node"/);
+  assert.match(source, /Node runtime:/);
+});
