@@ -48,6 +48,20 @@ test("resolved project snapshot is embedded into local meta and controller bundl
   assert.match(compatibilitySource, /process\.env\.F2RE_MANAGED_PROJECTS_FILE/);
 });
 
+test("tool and package downloads use a persistent cache by default", () => {
+  assert.match(source, /F2RE_STACK_CACHE_DIR/);
+  assert.match(source, /DEFAULT_CACHE_BASE/);
+  assert.match(source, /--cache-dir\)/);
+  assert.match(source, /--no-cache\)/);
+  assert.match(source, /CACHE_DIR\/node\/v\$\{NODE_VERSION\}\/linux-\$\{node_arch\}/);
+  assert.match(source, /Node\.js \$NODE_VERSION: используем проверенный кеш/);
+  assert.match(source, /node_archive_valid/);
+  assert.match(source, /npm_config_cache="\$NPM_CACHE"/);
+  assert.match(source, /PIP_CACHE_DIR="\$PIP_CACHE"/);
+  assert.match(source, /KAFEDRA_RUNTIME_CACHE_DIR="\$KAFEDRA_CACHE"/);
+  assert.doesNotMatch(source, /KAFEDRA_RUNTIME_CACHE_DIR="\$WORK_DIR\/kafedra-runtime-cache"/);
+});
+
 test("planner local build selects Python 3.11+ independently from generic python3", () => {
   assert.match(source, /BUILD_PYTHON_RESOLVED=""/);
   assert.match(source, /ensure_build_python\(\)/);
