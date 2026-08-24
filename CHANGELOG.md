@@ -4,6 +4,27 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.4] - 2026-08-24
+
+### Changed
+
+- `f2re-stack.sh prepare` теперь по умолчанию выполняет полноценную локальную сборку (`--source build`) `meta`, `docomator`, `planer-solving` и `kafedra-planner`, а не пытается сначала найти CI artifacts.
+- Общий standalone Node.js runtime поднят до `24.19.0`: он удовлетворяет `docomator >=24.18.0` и совпадает с закреплённым offline runtime Kafedra.
+- Локальная сборка Kafedra переведена с контейнера на штатный `scripts/offline/build-bundle.sh`; Docker больше не является зависимостью F2RE Stack.
+- `--source auto` сохраняет прежний exact-SHA artifact-first режим, `--source download` — режим без локальной сборки.
+- Project Control version: `0.5.3` → `0.5.4`.
+
+### Added
+
+- Для Kafedra явно разрешены два native format: опубликованный `kafedra-full-airgap-v2` и локально собираемый `kafedra-runtime-offline-v1`.
+- `stack_tool.py` проверяет native format по явному allowlist, а неизвестный формат отклоняет.
+- CI реально собирает полный F2RE Stack для Astra 1.7 локально без Docker и проверяет wrapper-пакеты всех трёх приложений.
+- Регрессионные тесты фиксируют default local-build, отсутствие Docker-вызовов и поддержку runtime-only Kafedra package.
+
+### Notes
+
+- Runtime-only Kafedra содержит приложение и автономный Node.js; календарь, задачи, API, worker и миграции работают из комплекта. OCR/Poppler/LibreOffice остаются дополнительными возможностями целевой ОС. Full-airgap Kafedra с `.deb`-слоем остаётся отдельным target-specific CI/download вариантом.
+
 ## [0.5.3] - 2026-08-24
 
 ### Fixed
@@ -103,6 +124,7 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.4]: https://github.com/f2re/meta/releases/tag/v0.5.4
 [0.5.3]: https://github.com/f2re/meta/releases/tag/v0.5.3
 [0.5.2]: https://github.com/f2re/meta/releases/tag/v0.5.2
 [0.5.1]: https://github.com/f2re/meta/releases/tag/v0.5.1
