@@ -9,33 +9,46 @@ on:
       - ".github/workflows/release-contract.yml"
       - ".github/workflows/release-verify.yml"
       - "project-control/VERSION"
-  push:
-    branches: [main]
-    paths:
-      - "README.md"
-      - "CHANGELOG.md"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/release-contract.yml"
-      - ".github/workflows/release-verify.yml"
-      - "project-control/VERSION"
+  release:
+    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   latest:
-    name: Latest release metadata and download contract
+    name: Published release metadata and download contract
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == release ]]; then
+            TAG="$EVENT_TAG"
+          else
+            TAG="$(gh release view --json tagName --jq '.tagName')"
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || { echo "Published tag is not SemVer: $TAG" >&2; exit 2; }
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Проверяется опубликованный release $TAG; candidate VERSION в PR проверяется Project Control CI."
+
       - name: Inspect published release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -Eeuo pipefail
-          VERSION="$(tr -d '[:space:]' < project-control/VERSION)"
-          TAG="v$VERSION"
           gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets > release.json
           cat release.json
 
@@ -77,10 +90,10 @@ jobs:
       - name: Download small integrity metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -Eeuo pipefail
-          VERSION="$(tr -d '[:space:]' < project-control/VERSION)"
-          TAG="v$VERSION"
           mkdir verify
           gh release download "$TAG" --dir verify \
             --pattern 'release-manifest.json' \

@@ -15,7 +15,7 @@ usage() {
   --dry-run              только проверить архив и показать план
   --skip-meta            не переустанавливать Project Control
   --project ID           обновить только один проект после meta
-  --url URL              Project Control URL (по умолчанию http://127.0.0.1:9090)
+  --url URL              Project Control URL, включая path prefix при необходимости
   -h, --help             справка
 
 При чистой совместной установке Kafedra Planner автоматически получает API 8090
@@ -97,13 +97,19 @@ fi
 python3 - "$BASE_URL" <<'PY'
 import http.client, sys, time
 from urllib.parse import urlparse
-url=urlparse(sys.argv[1]); cls=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
+url=urlparse(sys.argv[1])
+if url.scheme not in {'http','https'} or not url.hostname or url.query or url.fragment:
+    raise SystemExit('Некорректный Project Control URL')
+cls=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
 port=url.port or (443 if url.scheme=='https' else 80)
+prefix=(url.path or '').rstrip('/')
+endpoint=(prefix + '/api/ping') or '/api/ping'
 last=None
 for _ in range(60):
     try:
-        c=cls(url.hostname,port,timeout=2); c.request('GET','/api/ping'); r=c.getresponse(); data=r.read()
+        c=cls(url.hostname,port,timeout=2); c.request('GET',endpoint); r=c.getresponse(); data=r.read(); c.close()
         if r.status==200: print(data.decode()); raise SystemExit(0)
+        last=f'HTTP {r.status}: {data.decode(errors="replace")[:200]}'
     except Exception as exc: last=exc
     time.sleep(1)
 raise SystemExit(f"Project Control не отвечает: {last}")
@@ -189,12 +195,16 @@ for row in "${PROJECT_ROWS[@]}"; do
 import http.client, json, sys
 from urllib.parse import urlparse
 url=urlparse(sys.argv[1]); token, project_id, expected=sys.argv[2:]
+if url.scheme not in {'http','https'} or not url.hostname or url.query or url.fragment:
+    raise SystemExit('Некорректный Project Control URL')
 cls=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
 port=url.port or (443 if url.scheme=='https' else 80)
+prefix=(url.path or '').rstrip('/')
+endpoint=(prefix + '/api/projects') or '/api/projects'
 c=cls(url.hostname,port,timeout=15)
-c.request('GET','/api/projects',headers={'Authorization':f'Bearer {token}'})
-r=c.getresponse(); payload=json.loads(r.read().decode('utf-8') or '{}')
-if r.status!=200: raise SystemExit(f"/api/projects HTTP {r.status}: {payload}")
+c.request('GET',endpoint,headers={'Authorization':f'Bearer {token}'})
+r=c.getresponse(); payload=json.loads(r.read().decode('utf-8') or '{}'); c.close()
+if r.status!=200: raise SystemExit(f"{endpoint} HTTP {r.status}: {payload}")
 project=next((p for p in payload.get('projects',[]) if p.get('id')==project_id),None)
 if not project: raise SystemExit(f"{project_id}: проект не найден после установки")
 if project.get('version')!=expected: raise SystemExit(f"{project_id}: активна {project.get('version')}, ожидалась {expected}")
@@ -206,13 +216,19 @@ done
 python3 - "$BASE_URL" "$TOKEN" <<'PY'
 import http.client,json,sys
 from urllib.parse import urlparse
-url=urlparse(sys.argv[1]); token=sys.argv[2]; cls=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
-c=cls(url.hostname,url.port or (443 if url.scheme=='https' else 80),timeout=15)
-c.request('GET','/api/projects',headers={'Authorization':f'Bearer {token}'})
-r=c.getresponse(); data=json.loads(r.read().decode() or '{}')
+url=urlparse(sys.argv[1]); token=sys.argv[2]
+if url.scheme not in {'http','https'} or not url.hostname or url.query or url.fragment:
+    raise SystemExit('Некорректный Project Control URL')
+cls=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
+port=url.port or (443 if url.scheme=='https' else 80)
+prefix=(url.path or '').rstrip('/')
+endpoint=(prefix + '/api/projects') or '/api/projects'
+c=cls(url.hostname,port,timeout=15)
+c.request('GET',endpoint,headers={'Authorization':f'Bearer {token}'})
+r=c.getresponse(); data=json.loads(r.read().decode() or '{}'); c.close()
 print('\nИтог:')
 for p in data.get('projects',[]): print(f"  {p['id']}: version={p.get('version') or '-'} healthy={bool(p.get('healthy'))}")
-if r.status!=200: raise SystemExit(1)
+if r.status!=200: raise SystemExit(f"{endpoint} HTTP {r.status}: {data}")
 PY
 
 echo "F2RE Stack развёрнут успешно."

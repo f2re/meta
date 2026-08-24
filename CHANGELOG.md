@@ -4,6 +4,21 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.3] - 2026-08-24
+
+### Fixed
+
+- `deploy-stack.sh --url` теперь последовательно учитывает nginx/path prefix не только при загрузке package, но и при `/api/ping`, проверке версии/health после каждого проекта и итоговом `/api/projects`.
+- Добавлена ранняя валидация Project Control URL для stack deploy; query/fragment не принимаются как неоднозначная конфигурация.
+
+### Added
+
+- Регрессионный тест, запрещающий возврат к hardcoded `/api/ping` и `/api/projects` в prefix-aware stack deployment.
+
+### Changed
+
+- Project Control version: `0.5.2` → `0.5.3`.
+
 ## [0.5.2] - 2026-08-24
 
 ### Fixed
@@ -88,6 +103,7 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.3]: https://github.com/f2re/meta/releases/tag/v0.5.3
 [0.5.2]: https://github.com/f2re/meta/releases/tag/v0.5.2
 [0.5.1]: https://github.com/f2re/meta/releases/tag/v0.5.1
 [0.5.0]: https://github.com/f2re/meta/releases/tag/v0.5.0
