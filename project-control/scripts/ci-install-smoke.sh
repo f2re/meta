@@ -117,7 +117,11 @@ NODE
 python3 - "$PING" "$VERSION" <<'PY'
 import json, sys
 payload = json.loads(sys.argv[1])
-assert payload == {"ok": True, "version": sys.argv[2]}, payload
+assert payload["ok"] is True, payload
+assert payload["version"] == sys.argv[2], payload
+assert payload["discovery"] is True, payload
+assert payload["chunkedUpload"] is True, payload
+assert payload["asyncJobs"] is True, payload
 PY
 
 TOKEN="$(awk -F= '$1=="PROJECT_CONTROL_ACCESS_TOKEN"{sub(/^[^=]*=/, ""); print; exit}' /etc/project-control/project-control.env)"
@@ -126,27 +130,63 @@ TOKEN="$(awk -F= '$1=="PROJECT_CONTROL_ACCESS_TOKEN"{sub(/^[^=]*=/, ""); print; 
 /opt/project-control/current/runtime/node/bin/node - "$TOKEN" <<'NODE'
 const http = require('node:http');
 const token = process.argv[2];
-function get(path, headers={}) {
+function request(path, {method='GET', headers={}, body=null}={}) {
   return new Promise((resolve,reject)=>{
-    const req=http.get({host:'127.0.0.1',port:9090,path,headers,timeout:3000},res=>{
-      let body=''; res.setEncoding('utf8'); res.on('data',c=>body+=c);
-      res.on('end',()=>resolve({status:res.statusCode,body}));
+    const payload = body == null ? null : Buffer.isBuffer(body) ? body : Buffer.from(body);
+    const req=http.request({
+      host:'127.0.0.1',port:9090,path,method,
+      headers:{...headers,...(payload?{'content-length':payload.length}:{})},timeout:5000
+    },res=>{
+      let responseBody=''; res.setEncoding('utf8'); res.on('data',c=>responseBody+=c);
+      res.on('end',()=>resolve({status:res.statusCode,body:responseBody,headers:res.headers}));
     });
     req.on('error',reject); req.on('timeout',()=>{req.destroy();reject(new Error('timeout'))});
+    if (payload) req.end(payload); else req.end();
   });
 }
+function json(response) { try { return JSON.parse(response.body || '{}'); } catch { throw new Error(`bad json: ${response.body}`); } }
 (async () => {
-  const ui = await get('/');
-  if (ui.status !== 200 || !ui.body.includes('Project Control')) throw new Error(`UI smoke failed: ${ui.status}`);
-  const projects = await get('/api/projects', {Authorization:`Bearer ${token}`});
+  const ui = await request('/');
+  if (ui.status !== 200 || !ui.body.includes('Project Control') || !ui.body.includes('Пересканировать сервер')) throw new Error(`UI smoke failed: ${ui.status}`);
+
+  const prefixedUi = await request('/proxy/project-control/');
+  if (prefixedUi.status !== 200 || !prefixedUi.body.includes('src="app.js"')) throw new Error(`prefixed UI failed: ${prefixedUi.status}`);
+  const prefixedJs = await request('/proxy/project-control/app.js');
+  if (prefixedJs.status !== 200 || !prefixedJs.body.includes('uploads/start')) throw new Error(`prefixed app.js failed: ${prefixedJs.status}`);
+  if (!String(prefixedJs.headers['cache-control'] || '').includes('no-store')) throw new Error('app.js must be no-store');
+
+  const ping = await request('/proxy/project-control/api/ping');
+  if (ping.status !== 200 || !json(ping).discovery) throw new Error(`prefixed ping failed: ${ping.status}`);
+
+  const auth = {Authorization:`Bearer ${token}`};
+  const projects = await request('/proxy/project-control/api/projects?rescan=1', {headers:auth});
   if (projects.status !== 200) throw new Error(`API projects failed: ${projects.status} ${projects.body}`);
-  const payload = JSON.parse(projects.body);
+  const payload = json(projects);
   const ids = payload.projects.map(p=>p.id).sort().join(',');
   if (ids !== 'docomator,kafedra-planner,planer-solving') throw new Error(`unexpected project ids: ${ids}`);
-  console.log('ui-api-ipc-ok: / and authenticated /api/projects');
+  if (!payload.discovery || !Array.isArray(payload.discovery.listeningPorts) || !payload.discovery.nginx || !payload.discovery.opt) throw new Error('discovery payload missing');
+
+  const discovery = await request('/proxy/project-control/api/discovery?rescan=1', {headers:auth});
+  if (discovery.status !== 200 || !Array.isArray(json(discovery).projects)) throw new Error(`discovery endpoint failed: ${discovery.status}`);
+
+  const bytes = Buffer.from('abcdef');
+  const start = await request('/proxy/project-control/api/uploads/start', {
+    method:'POST', headers:{...auth,'content-type':'application/json'},
+    body:JSON.stringify({projectId:'docomator',fileName:'smoke.f2re.zip',size:bytes.length})
+  });
+  if (start.status !== 201) throw new Error(`chunk start failed: ${start.status} ${start.body}`);
+  const uploadId = json(start).uploadId;
+  const chunk = await request(`/proxy/project-control/api/uploads/${uploadId}/chunk`, {
+    method:'PUT', headers:{...auth,'content-type':'application/octet-stream','x-chunk-index':'0'}, body:bytes
+  });
+  if (chunk.status !== 200 || !json(chunk).complete) throw new Error(`chunk upload failed: ${chunk.status} ${chunk.body}`);
+  const abort = await request(`/proxy/project-control/api/uploads/${uploadId}`, {method:'DELETE',headers:auth});
+  if (abort.status !== 200) throw new Error(`chunk abort failed: ${abort.status}`);
+
+  console.log('ui-api-discovery-proxy-chunk-ok');
 })().catch((error) => { console.error(error); process.exit(1); });
 NODE
 
 kill -0 "$(cat "$STATE/executor.pid")"
 kill -0 "$(cat "$STATE/web.pid")"
-echo "deployment-smoke-ok: Project Control $VERSION installed; UI, executor IPC and /api/ping are live"
+echo "deployment-smoke-ok: Project Control $VERSION installed; proxy-prefix UI, discovery, chunk API, executor IPC and /api/ping are live"

@@ -5,25 +5,63 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Project Control</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
       <p class="eyebrow">Локальное управление сервисами</p>
       <h1>Project Control</h1>
-      <p class="subtitle">Версии, состояние и безопасное offline-обновление на одном экране.</p>
+      <p class="subtitle">Фактические установки, порты, nginx, systemd и безопасное offline-обновление.</p>
     </div>
     <div class="top-actions">
-      <button id="refreshButton" class="button secondary" type="button">Обновить состояние</button>
+      <button id="refreshButton" class="button secondary" type="button">Обновить</button>
+      <button id="rescanButton" class="button secondary" type="button">Пересканировать сервер</button>
       <button id="changeKeyButton" class="button tertiary" type="button">Ключ доступа</button>
     </div>
   </header>
 
   <main>
+    <section id="bootStatus" class="banner info" role="status">
+      Интерфейс загружается… Если эта надпись не исчезает, браузер не получил <code>app.js</code>. Проверьте nginx-префикс и обновите страницу без кэша.
+    </section>
+    <noscript><section class="banner error">JavaScript отключён. Управление проектами без JavaScript недоступно.</section></noscript>
     <section id="securityBanner" class="banner hidden" role="status"></section>
     <section id="globalStatus" class="global-status" aria-live="polite"></section>
-    <section id="projectGrid" class="project-grid" aria-label="Управляемые проекты"></section>
+
+    <section class="section-block">
+      <div class="section-heading row-heading">
+        <div>
+          <h2>Обнаружение сервера</h2>
+          <p>Project Control сверяет /opt, systemd, TCP LISTEN и nginx-конфигурацию при каждом сканировании.</p>
+        </div>
+        <span id="scanAge" class="quiet"></span>
+      </div>
+      <div id="discoverySummary" class="discovery-summary"></div>
+      <div id="discoveryWarnings" class="diagnostic-list"></div>
+      <div class="details-grid">
+        <details>
+          <summary>Слушающие порты <span id="portCount" class="count"></span></summary>
+          <div id="portList" class="compact-list"></div>
+        </details>
+        <details>
+          <summary>Маршруты nginx <span id="nginxCount" class="count"></span></summary>
+          <div id="nginxList" class="compact-list"></div>
+        </details>
+        <details>
+          <summary>Каталоги /opt <span id="optCount" class="count"></span></summary>
+          <div id="optList" class="compact-list"></div>
+        </details>
+      </div>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <h2>Управляемые проекты</h2>
+        <p>Карточка показывает не только ожидаемый контракт, но и фактически обнаруженные признаки на сервере.</p>
+      </div>
+      <section id="projectGrid" class="project-grid" aria-label="Управляемые проекты"></section>
+    </section>
 
     <section class="history-section">
       <div class="section-heading">
@@ -42,7 +80,7 @@
   <dialog id="keyDialog">
     <form method="dialog" id="keyForm">
       <h2>Ключ доступа</h2>
-      <p>Ключ создаётся при установке Project Control. Он даёт право обновлять и перезапускать системные службы.</p>
+      <p>Ключ создаётся при установке Project Control и хранится в <code>/root/project-control-access.txt</code>.</p>
       <label for="accessKey">Ключ</label>
       <input id="accessKey" name="accessKey" type="password" autocomplete="off" required minlength="24">
       <p id="keyError" class="error-text" aria-live="polite"></p>
@@ -64,14 +102,20 @@
       </div>
       <dl class="facts">
         <div><dt>Версия</dt><dd class="version">—</dd></div>
-        <div><dt>Последнее обновление</dt><dd class="updated">—</dd></div>
+        <div><dt>Путь</dt><dd class="install-path">—</dd></div>
+        <div><dt>Порт</dt><dd class="port">—</dd></div>
+        <div><dt>nginx</dt><dd class="proxy">—</dd></div>
         <div><dt>Службы</dt><dd class="services">—</dd></div>
+        <div><dt>Обнаружено по</dt><dd class="evidence">—</dd></div>
+        <div><dt>Последнее обновление</dt><dd class="updated">—</dd></div>
       </dl>
+      <div class="health-box"></div>
+      <div class="project-warnings"></div>
       <div class="drop-zone" tabindex="0" role="button" aria-label="Выбрать Project Control ZIP package">
         <input class="file-input" type="file" accept=".zip,application/zip" hidden>
         <strong>Перетащите сюда .f2re.zip</strong>
         <span>или нажмите, чтобы выбрать файл</span>
-        <small>Перед установкой будут проверены проект, версия, SHA-256 и native bundle.</small>
+        <small>Файл передаётся чанками по 512 КиБ; установка выполняется отдельной job и не зависит от nginx timeout.</small>
       </div>
       <div class="progress hidden"><div class="progress-bar"></div><span class="progress-text"></span></div>
       <p class="message" aria-live="polite"></p>
@@ -81,6 +125,6 @@
     </article>
   </template>
 
-  <script src="/app.js" type="module"></script>
+  <script src="app.js" type="module"></script>
 </body>
 </html>
