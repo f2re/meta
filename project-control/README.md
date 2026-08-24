@@ -15,7 +15,7 @@ Project Control — локальный сервис единого монито�
 
 Latest release: <https://github.com/f2re/meta/releases/latest>
 
-## Что показывает интерфейс 0.5.0
+## Что показывает интерфейс 0.5.2
 
 UI выполняет фактический runtime discovery:
 
@@ -29,9 +29,9 @@ UI выполняет фактический runtime discovery:
 
 Кнопка **«Пересканировать сервер»** принудительно сбрасывает короткий discovery cache. Если privileged executor неисправен, host discovery и UI остаются доступными и показывают ошибку executor; update/restart при этом недоступны до восстановления executor.
 
-Frontend работает как напрямую на `:9090`, так и за nginx path prefix. HTML/JS/CSS отдаются `no-store`, а API base вычисляется от URL реально загруженного `app.js`.
+Frontend работает как напрямую на `:9090`, так и за nginx path prefix. HTML/JS/CSS отдаются `no-store`, API base вычисляется от URL реально загруженного `app.js`, а compatibility layer окна ключа также корректно загружается через prefix.
 
-Browser update использует блоки по 512 КиБ и отдельную apply-job: это не зависит от типового nginx `client_max_body_size 1m` и не держит один HTTP request на всё время native installer. Подробности: `docs/RUNTIME_DISCOVERY.md`.
+Browser update использует блоки по 512 КиБ и отдельную apply-job: это не зависит от типового nginx `client_max_body_size 1m` и не держит один HTTP request на всё время native installer. Тот же chunked/job-контур используется `deploy-stack.sh`. Подробности: `docs/RUNTIME_DISCOVERY.md`.
 
 ## Установка стабильного meta-bundle
 
@@ -58,11 +58,14 @@ sudo cat /root/project-control-access.txt
 
 ## F2RE Stack
 
-На build-машине:
+На build-машине с интернетом:
 
 ```bash
 git clone https://github.com/f2re/meta.git
-cd meta/project-control
+cd meta
+git pull --ff-only
+git rev-parse HEAD
+cd project-control
 gh auth login
 
 ./scripts/f2re-stack.sh prepare --astra 1.7
@@ -70,7 +73,17 @@ gh auth login
 ./scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
+`prepare` намеренно работает с **exact SHA текущего локального checkout**. Если в строке `meta: поиск ... для <SHA>` отображается старый commit, обновите checkout через `git pull --ff-only`; скрипт не переключает исходники на более новый `main` скрытно.
+
+В режиме `auto` сначала скачиваются CI artifacts exact-SHA. Если конкретного artifact ещё нет, выполняется локальный fallback build. Системный Node.js для этого не нужен: официальный standalone Node.js скачивается автоматически, проверяется по `SHASUMS256.txt` и затем явно передаётся builder-ам. Для отдельных fallback builder-ов дополнительно могут потребоваться `curl`, `xz`, `python3-venv` и Docker.
+
 `stack_tool.py` проверяет target metadata: bundle 1.8 нельзя использовать как 1.7 простым переименованием. После подготовки stack переносится в закрытый контур и запускается `sudo ./deploy-stack.sh`.
+
+Если нужно строго только скачать проверенные CI artifacts и не разрешать fallback build:
+
+```bash
+./scripts/f2re-stack.sh prepare --astra 1.7 --source download
+```
 
 ## Операторский сценарий через UI
 
@@ -118,7 +131,7 @@ TARGET_ASTRA_VERSION=1.8 \
 
 ## CI и релизы
 
-`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix unit tests, Python-тесты, stack pack/dry-run и compatibility checks.
+`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix unit tests, dialog compatibility tests, Python-тесты chunked deployment client, stack pack/dry-run и compatibility checks.
 
 `Project Control CI` затем независимо собирает и устанавливает release candidate в:
 
