@@ -2,11 +2,25 @@
 set -Eeuo pipefail
 
 META_ROOT="${1:-}"
-[[ -n "$META_ROOT" && -d "$META_ROOT" ]] || { echo "Usage: $0 <extracted-meta-root>" >&2; exit 2; }
+EXPECTED_ASTRA_VERSION="${2:-}"
+[[ -n "$META_ROOT" && -d "$META_ROOT" ]] || { echo "Usage: $0 <extracted-meta-root> [1.7|1.8]" >&2; exit 2; }
+[[ -z "$EXPECTED_ASTRA_VERSION" || "$EXPECTED_ASTRA_VERSION" == "1.7" || "$EXPECTED_ASTRA_VERSION" == "1.8" ]] || { echo "Expected Astra version must be 1.7 or 1.8" >&2; exit 2; }
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo "CI install smoke must run as root" >&2; exit 2; }
 for cmd in bash python3 sha256sum tar useradd groupadd getent runuser; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Не найдена команда для deployment smoke: $cmd" >&2; exit 2; }
 done
+
+if [[ -n "$EXPECTED_ASTRA_VERSION" ]]; then
+  python3 - "$META_ROOT/meta-release.json" "$EXPECTED_ASTRA_VERSION" <<'PY'
+import json, sys
+from pathlib import Path
+release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+actual = str(release["target"]["version"])
+expected = sys.argv[2]
+assert actual == expected or actual.startswith(expected + "."), (actual, expected)
+print(f"target-ok: Astra Linux {actual}")
+PY
+fi
 
 STATE="$(mktemp -d)"
 FAKE_BIN="$STATE/bin"
