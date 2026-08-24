@@ -14,7 +14,10 @@ export const ADAPTERS = Object.freeze({
     native: Object.freeze({
       verify: Object.freeze({ script: "verify-bundle.sh", args: ["."] }),
       update: Object.freeze({ script: "update.sh", args: ["--bundle-root", "."] }),
-      install: Object.freeze({ script: "install.sh", args: ["--bundle-root", ".", "--install-os-packages"] })
+      // Project Control CI releases are generic bundles: preview/LLM are disabled and
+      // no target-specific .deb layer is present. --install-os-packages would make a
+      // clean install fail with "В комплекте нет пакетов .deb".
+      install: Object.freeze({ script: "install.sh", args: ["--bundle-root", "."] })
     })
   }),
   "planer-solving": Object.freeze({
