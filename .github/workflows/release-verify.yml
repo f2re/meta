@@ -5,6 +5,10 @@ on:
     workflows: ["Release"]
     types: [completed]
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-verify.yml"
 
 permissions:
   contents: read
