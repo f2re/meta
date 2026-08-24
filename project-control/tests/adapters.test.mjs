@@ -18,3 +18,11 @@ test("known health endpoints are explicit", () => {
   assert.equal(ADAPTERS["planer-solving"].healthPath, "/api/health");
   assert.equal(ADAPTERS["kafedra-planner"].healthPath, "/api/system/health");
 });
+
+test("docomator v1 initial install accepts the published generic bundle", () => {
+  assert.deepEqual(ADAPTERS.docomator.native.install, {
+    script: "install.sh",
+    args: ["--bundle-root", "."]
+  });
+  assert.equal(ADAPTERS.docomator.native.install.args.includes("--install-os-packages"), false);
+});

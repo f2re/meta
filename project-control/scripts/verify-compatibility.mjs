@@ -36,6 +36,9 @@ for (const project of manifest.projects) {
   if (!project.release || project.release.ci !== "github-actions" || !project.release.artifactPattern?.endsWith("-project-control.f2re.zip")) {
     fail(`${project.projectId}: release contract`);
   }
+  if (!/^[A-Za-z0-9._{}+-]+$/.test(project.release.actionsArtifact || "") || !project.release.actionsArtifact.includes("{commit}")) {
+    fail(`${project.projectId}: release.actionsArtifact должен содержать {commit}`);
+  }
 
   for (const key of ["displayName", "adapter", "currentPath", "versionFile", "configFile", "portKey", "defaultPort", "healthPath"]) {
     same(project[key], adapter[key], `${project.projectId}.${key}`);
