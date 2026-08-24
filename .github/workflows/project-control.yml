@@ -4,25 +4,29 @@ on:
   pull_request:
     paths:
       - "README.md"
+      - "CHANGELOG.md"
       - ".gitignore"
       - "legacy/**"
       - "project-control/**"
       - ".github/workflows/project-control.yml"
+      - ".github/workflows/release.yml"
   push:
     branches: [main]
     paths:
       - "README.md"
+      - "CHANGELOG.md"
       - ".gitignore"
       - "legacy/**"
       - "project-control/**"
       - ".github/workflows/project-control.yml"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Contract, stack, Astra deployment and meta-bundle
+  contract:
+    name: Contract, tests and controller bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     defaults:
@@ -38,6 +42,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.8"
+
+      - name: Version contract
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          test "$VERSION" = "$(node -p 'require("./package.json").version')"
+          test "$VERSION" = "$(awk -F= '$1=="PROJECT_CONTROL_VERSION"{print $2}' config/project-control.env.example)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
 
       - name: Node, Python, stack and compatibility tests
         run: npm run check
@@ -59,6 +71,8 @@ jobs:
       - name: Stack CLI smoke
         run: |
           ./scripts/f2re-stack.sh --help >/dev/null
+          ./scripts/f2re-stack.sh prepare --astra 1.7 --help >/dev/null
+          ./scripts/f2re-stack.sh prepare --astra 1.8 --help >/dev/null
           ./scripts/deploy-stack.sh --help >/dev/null
 
       - name: Prepare portable Node.js runtime
@@ -89,59 +103,111 @@ jobs:
           tar -tzf project-control-*.tar.gz > bundle-files.txt
           grep -F '/manifest.sha256' bundle-files.txt >/dev/null
 
-      - name: Build and verify Astra Linux meta-bundle
-        env:
-          NODE_RUNTIME_DIR: ${{ steps.runtime.outputs.path }}
-          TARGET_ASTRA_VERSION: "1.8"
-        run: |
-          set -Eeuo pipefail
-          DIST="$RUNNER_TEMP/meta-dist"
-          mkdir -p "$DIST"
-          OUT_DIR="$DIST" ./scripts/build-meta-bundle.sh
-          cd "$DIST"
-          sha256sum -c --strict f2re-meta-*.tar.gz.sha256
-          EXTRACT="$RUNNER_TEMP/meta-extracted"
-          mkdir -p "$EXTRACT"
-          tar -xzf f2re-meta-*.tar.gz -C "$EXTRACT"
-          META_ROOT="$(find "$EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
-          test -n "$META_ROOT"
-          "$META_ROOT/verify.sh"
-
-      - name: Pull official Astra Linux 1.8 UBI
-        run: docker pull registry.astralinux.ru/library/astra/ubi18-python311:latest
-
-      - name: Install and start bundle in Astra Linux 1.8 userspace
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          docker run --rm \
-            -v "$RUNNER_TEMP/meta-dist:/dist:ro" \
-            -v "$GITHUB_WORKSPACE/project-control/scripts/ci-install-smoke.sh:/ci-install-smoke.sh:ro" \
-            registry.astralinux.ru/library/astra/ubi18-python311:latest \
-            /bin/bash -lc '
-              set -Eeuo pipefail
-              cd /dist
-              sha256sum -c --strict f2re-meta-*.tar.gz.sha256
-              mkdir -p /tmp/f2re-meta
-              tar -xzf f2re-meta-*.tar.gz -C /tmp/f2re-meta
-              META_ROOT="$(find /tmp/f2re-meta -mindepth 1 -maxdepth 1 -type d -print -quit)"
-              /ci-install-smoke.sh "$META_ROOT"
-            '
-
       - name: Upload low-level controller bundle
         uses: actions/upload-artifact@v4
         with:
           name: project-control-offline-linux-x64
           path: ${{ runner.temp }}/project-control-dist/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
-      - name: Upload Astra Linux meta-bundle
+  astra:
+    name: Astra ${{ matrix.astra }} build and deployment
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - astra: "1.7"
+            image: registry.astralinux.ru/library/astra/ubi17:1.7.5
+          - astra: "1.8"
+            image: registry.astralinux.ru/library/astra/ubi18-python311:latest
+    defaults:
+      run:
+        working-directory: project-control
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Prepare portable Node.js runtime
+        id: runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          NODE_BIN="$(readlink -f "$(command -v node)")"
+          NODE_HOME="$(cd "$(dirname "$NODE_BIN")/.." && pwd -P)"
+          test -f "$NODE_HOME/LICENSE"
+          RUNTIME="$RUNNER_TEMP/project-control-node"
+          mkdir -p "$RUNTIME/bin"
+          cp "$NODE_BIN" "$RUNTIME/bin/node"
+          cp "$NODE_HOME/LICENSE" "$RUNTIME/LICENSE"
+          echo "path=$RUNTIME" >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify Astra ${{ matrix.astra }} meta-bundle
+        env:
+          NODE_RUNTIME_DIR: ${{ steps.runtime.outputs.path }}
+          TARGET_ASTRA_VERSION: ${{ matrix.astra }}
+        run: |
+          set -Eeuo pipefail
+          DIST="$RUNNER_TEMP/meta-dist-${{ matrix.astra }}"
+          mkdir -p "$DIST"
+          OUT_DIR="$DIST" ./scripts/build-meta-bundle.sh
+          cd "$DIST"
+          sha256sum -c --strict f2re-meta-*.tar.gz.sha256
+          EXTRACT="$RUNNER_TEMP/meta-extracted-${{ matrix.astra }}"
+          mkdir -p "$EXTRACT"
+          tar -xzf f2re-meta-*.tar.gz -C "$EXTRACT"
+          META_ROOT="$(find "$EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$META_ROOT"
+          "$META_ROOT/verify.sh"
+          python3 - "$META_ROOT/meta-release.json" '${{ matrix.astra }}' <<'PY'
+          import json, sys
+          release=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert str(release['target']['version']).startswith(sys.argv[2]), release
+          PY
+
+      - name: Pull official Astra Linux ${{ matrix.astra }} UBI
+        run: docker pull '${{ matrix.image }}'
+
+      - name: Install and start bundle in Astra Linux ${{ matrix.astra }} userspace
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            -v "$RUNNER_TEMP/meta-dist-${{ matrix.astra }}:/dist:ro" \
+            -v "$GITHUB_WORKSPACE/project-control/scripts/ci-install-smoke.sh:/ci-install-smoke.sh:ro" \
+            '${{ matrix.image }}' \
+            /bin/bash -lc '
+              set -Eeuo pipefail
+              missing=0
+              for cmd in python3 useradd groupadd getent runuser sha256sum tar; do command -v "$cmd" >/dev/null 2>&1 || missing=1; done
+              if ((missing)); then
+                apt-get update >/dev/null
+                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 passwd util-linux coreutils tar >/dev/null
+              fi
+              cd /dist
+              sha256sum -c --strict f2re-meta-*.tar.gz.sha256
+              mkdir -p /tmp/f2re-meta
+              tar -xzf f2re-meta-*.tar.gz -C /tmp/f2re-meta
+              META_ROOT="$(find /tmp/f2re-meta -mindepth 1 -maxdepth 1 -type d -print -quit)"
+              /ci-install-smoke.sh "$META_ROOT" '${{ matrix.astra }}'
+            '
+
+      - name: Upload Astra Linux ${{ matrix.astra }} meta-bundle
         uses: actions/upload-artifact@v4
         with:
-          name: f2re-meta-astra-1.8-amd64
+          name: f2re-meta-astra-${{ matrix.astra }}-amd64
           path: |
-            ${{ runner.temp }}/meta-dist/f2re-meta-*.tar.gz
-            ${{ runner.temp }}/meta-dist/f2re-meta-*.tar.gz.sha256
+            ${{ runner.temp }}/meta-dist-${{ matrix.astra }}/f2re-meta-*.tar.gz
+            ${{ runner.temp }}/meta-dist-${{ matrix.astra }}/f2re-meta-*.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
