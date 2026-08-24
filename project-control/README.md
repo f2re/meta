@@ -1,12 +1,23 @@
 # F2RE Project Control
 
-Project Control — локальный сервис единого мониторинга, диагностики, перезапуска и офлайн-обновления приложений F2RE на Astra Linux/Debian. Целевой эксплуатационный профиль — **Astra Linux Special Edition 1.8, amd64**.
+Project Control — локальный сервис единого мониторинга, диагностики, перезапуска и офлайн-обновления приложений F2RE на Astra Linux/Debian. Стабильные release targets: **Astra Linux Special Edition 1.7 и 1.8, amd64**.
 
 Поддерживаются три явно allowlisted проекта: `docomator`, `planer-solving`, `kafedra-planner`. Их репозитории, проверенные commit SHA, CI artifacts, adapter ID, native formats, штатные пути, службы и health endpoints зафиксированы в `config/managed-projects.json` и проверяются CI против `src/adapters.mjs`.
 
-## Что показывает интерфейс 0.4.0
+## Скачать
 
-Статического allowlist недостаточно для мониторинга реального сервера, поэтому UI выполняет фактический runtime discovery:
+Стабильные сборки публикуются в GitHub Releases:
+
+- Astra 1.7: `f2re-meta-astra-1.7-amd64.tar.gz`;
+- Astra 1.8: `f2re-meta-astra-1.8-amd64.tar.gz`;
+- portable controller: `project-control-linux-x64.tar.gz`;
+- `SHA256SUMS` и `release-manifest.json` для проверки всего релиза.
+
+Latest release: <https://github.com/f2re/meta/releases/latest>
+
+## Что показывает интерфейс 0.5.0
+
+UI выполняет фактический runtime discovery:
 
 - сканирует `/opt`, `current` и варианты `VERSION`;
 - читает состояние systemd и реальные unit paths/ExecStart;
@@ -16,47 +27,57 @@ Project Control — локальный сервис единого монито�
 - делает независимый HTTP health-check на фактически настроенном порту;
 - показывает обнаруженный путь, версию, порт, nginx route, службы, источники определения и предупреждения.
 
-Кнопка **«Пересканировать сервер»** принудительно сбрасывает короткий discovery cache. Если privileged executor неисправен, host discovery и UI остаются доступными и показывают ошибку executor; update/restart при этом блокируются естественным образом.
+Кнопка **«Пересканировать сервер»** принудительно сбрасывает короткий discovery cache. Если privileged executor неисправен, host discovery и UI остаются доступными и показывают ошибку executor; update/restart при этом недоступны до восстановления executor.
 
-Frontend работает как напрямую на `:9090`, так и за nginx path prefix. HTML/JS/CSS отдаются `no-store`, а API base вычисляется от URL реально загруженного `app.js`, поэтому `/project-control/` не превращается в страницу без функций.
+Frontend работает как напрямую на `:9090`, так и за nginx path prefix. HTML/JS/CSS отдаются `no-store`, а API base вычисляется от URL реально загруженного `app.js`.
 
-Browser update теперь использует блоки по 512 КиБ и отдельную apply-job: это не зависит от типового nginx `client_max_body_size 1m` и не держит один HTTP request на всё время native installer. Подробности: `docs/RUNTIME_DISCOVERY.md`.
+Browser update использует блоки по 512 КиБ и отдельную apply-job: это не зависит от типового nginx `client_max_body_size 1m` и не держит один HTTP request на всё время native installer. Подробности: `docs/RUNTIME_DISCOVERY.md`.
 
-## Вся система одним архивом
+## Установка стабильного meta-bundle
 
-Рекомендуемый путь — **F2RE Stack**. На машине с интернетом:
+Для Astra 1.7:
+
+```bash
+curl -fLO https://github.com/f2re/meta/releases/latest/download/f2re-meta-astra-1.7-amd64.tar.gz
+curl -fLO https://github.com/f2re/meta/releases/latest/download/f2re-meta-astra-1.7-amd64.tar.gz.sha256
+sha256sum -c f2re-meta-astra-1.7-amd64.tar.gz.sha256
+tar -xzf f2re-meta-astra-1.7-amd64.tar.gz
+cd f2re-meta-*-astra-1.7-amd64
+./verify.sh
+sudo ./install.sh
+```
+
+Для Astra 1.8 замените `1.7` на `1.8`.
+
+После установки:
+
+```bash
+curl -fsS http://127.0.0.1:9090/api/ping
+sudo cat /root/project-control-access.txt
+```
+
+## F2RE Stack
+
+На build-машине:
 
 ```bash
 git clone https://github.com/f2re/meta.git
 cd meta/project-control
 gh auth login
-./scripts/f2re-stack.sh prepare
+
+./scripts/f2re-stack.sh prepare --astra 1.7
+# или
+./scripts/f2re-stack.sh prepare --astra 1.8
 ```
 
-Скрипт сам скачивает проверенные GitHub Actions artifacts точных закреплённых SHA. Если отдельного artifact ещё нет, в режиме `auto` пересобирается только недостающий компонент его штатным builder. На выходе два переносимых файла:
-
-```text
-f2re-stack-<version>-astra-1.8-amd64.tar.gz
-f2re-stack-<version>-astra-1.8-amd64.tar.gz.sha256
-```
-
-На Astra Linux:
-
-```bash
-sha256sum -c f2re-stack-*.tar.gz.sha256
-tar -xzf f2re-stack-*.tar.gz
-cd f2re-stack-*
-sudo ./deploy-stack.sh
-```
-
-`deploy-stack.sh` проверяет весь набор, устанавливает/обновляет Project Control, а затем через его штатный API последовательно накатывает `docomator`, `planer-solving` и `kafedra-planner`. После каждого проекта обязательны совпадение активной версии и зелёный systemd/HTTP health-check. Подробно: `docs/STACK.md`.
+`stack_tool.py` проверяет target metadata: bundle 1.8 нельзя использовать как 1.7 простым переименованием. После подготовки stack переносится в закрытый контур и запускается `sudo ./deploy-stack.sh`.
 
 ## Операторский сценарий через UI
 
-1. Установить Project Control из `f2re-meta-<version>-astra-1.8-amd64.tar.gz` либо всего F2RE Stack.
-2. Открыть `http://<IP>:9090/` или nginx URL и ввести ключ доступа, созданный при первой установке.
+1. Установить Project Control из release meta-bundle либо F2RE Stack.
+2. Открыть `http://<IP>:9090/` или nginx URL и ввести ключ доступа.
 3. Нажать «Пересканировать сервер» и проверить найденные `/opt`, порты, systemd и nginx routes.
-4. Получить готовый `*-project-control.f2re.zip` из успешного CI нужного приложения.
+4. Получить готовый `*-project-control.f2re.zip` нужного приложения.
 5. Перетащить ZIP на карточку проекта.
 6. UI передаст ZIP маленькими блоками, сервер проверит identity/SHA-256/adapter/подпись и запустит штатный allowlisted installer отдельной job.
 7. Операция считается успешной только после совпадения активной версии и успешных systemd/HTTP health-check.
@@ -71,47 +92,39 @@ sudo ./deploy-stack.sh
 
 Для обязательной криптографической аутентификации release package установите `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` и доверенные Ed25519 public keys в `/etc/project-control/trusted-keys/<keyId>.pem`.
 
-## Отдельные артефакты
+## Локальная сборка
 
-Low-level controller bundle:
+Portable controller:
 
 ```bash
 NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 ./scripts/build-offline-bundle.sh
 ```
 
-Astra meta-bundle только для Project Control:
+Astra 1.7:
 
 ```bash
-NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 TARGET_ASTRA_VERSION=1.8 ./scripts/build-meta-bundle.sh
+NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 \
+TARGET_ASTRA_VERSION=1.7 \
+  ./scripts/build-meta-bundle.sh
 ```
 
-Полная принудительная пересборка всех четырёх компонентов и stack:
+Astra 1.8:
 
 ```bash
-./scripts/f2re-stack.sh prepare --source build
+NODE_RUNTIME_DIR=/srv/runtime/node-v24-linux-x64 \
+TARGET_ASTRA_VERSION=1.8 \
+  ./scripts/build-meta-bundle.sh
 ```
 
-Только скачать CI artifacts без fallback-сборки:
+## CI и релизы
 
-```bash
-./scripts/f2re-stack.sh prepare --source download
-```
+`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix unit tests, Python-тесты, stack pack/dry-run и compatibility checks.
 
-## Установка отдельного meta-bundle
+`Project Control CI` затем независимо собирает и устанавливает release candidate в:
 
-```bash
-sha256sum -c f2re-meta-*.tar.gz.sha256
-tar -xzf f2re-meta-*.tar.gz
-cd f2re-meta-*
-./verify.sh
-sudo ./install.sh
-curl -fsS http://127.0.0.1:9090/api/ping
-```
+- официальный Astra Linux 1.7 UBI;
+- официальный Astra Linux 1.8 UBI.
 
-По умолчанию UI слушает `0.0.0.0:9090`. Настройки находятся в `/etc/project-control/project-control.env`; данные, upload jobs и история — в `/var/lib/project-control`.
-
-## Проверки CI
-
-`npm run check` выполняет syntax-check backend и `public/app.js`, discovery/nginx/proxy-prefix unit tests, Python-тесты, stack pack/dry-run и сверку compatibility manifest с adapter allowlist. GitHub Actions дополнительно собирает Project Control/meta-bundle и запускает deployment smoke в официальном Astra Linux 1.8 UBI userspace, включая UI/API через URL prefix и chunk upload session.
+Workflow `Release` выпускает `vX.Y.Z` только после успешной сборки/смоука обеих платформ и публикует SHA-256 + machine-readable release manifest. Полный порядок: `../docs/RELEASING.md`.
 
 Подробности: `docs/RUNTIME_DISCOVERY.md`, `docs/STACK.md`, `docs/ASTRA_LINUX.md`, `docs/COMPATIBILITY.md`, `docs/STANDARD.md`.
