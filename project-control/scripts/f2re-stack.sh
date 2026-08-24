@@ -27,8 +27,8 @@ prepare (по умолчанию): для каждого компонента с
 f2re-stack-*-astra-1.8-amd64.tar.gz для переноса в закрытый контур.
 
 Переменные:
-  NODE_RUNTIME_DIR       готовый автономный Linux Node.js runtime
-  F2RE_NODE_VERSION      версия Node для автозагрузки (24.15.0)
+  NODE_RUNTIME_DIR          готовый автономный Linux Node.js runtime
+  F2RE_NODE_VERSION         версия Node для автозагрузки (24.15.0)
   F2RE_RELEASE_SIGNING_KEY  Ed25519 private key для локальной пересборки wrappers
 EOF
 }
@@ -45,11 +45,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$COMMAND" in
-  prepare|download|build|pack) ;;
-  -h|--help) usage; exit 0 ;;
-  *) echo "Неизвестная команда: $COMMAND" >&2; usage >&2; exit 2 ;;
-esac
+case "$COMMAND" in prepare|download|build|pack) ;; -h|--help) usage; exit 0 ;; *) echo "Неизвестная команда: $COMMAND" >&2; usage >&2; exit 2 ;; esac
 case "$SOURCE_MODE" in auto|download|build) ;; *) echo "--source: auto, download или build" >&2; exit 2 ;; esac
 [[ "$COMMAND" != download ]] || SOURCE_MODE=download
 [[ "$COMMAND" != build ]] || SOURCE_MODE=build
@@ -79,13 +75,15 @@ PY
 artifact_for_commit() {
   local repo="$1" artifact="$2" commit="$3" destination="$4"
   command -v gh >/dev/null 2>&1 || return 20
-  command -v unzip >/dev/null 2>&1 || return 21
   gh auth status >/dev/null 2>&1 || return 22
-  local metadata run_id
-  metadata="$(gh api -H 'Accept: application/vnd.github+json' "/repos/$repo/actions/artifacts?name=$artifact&per_page=100")" || return 23
-  run_id="$(python3 - "$commit" <<'PY' <<<"$metadata"
+  local safe metadata_file run_id
+  safe="${repo//\//_}-${artifact//[^A-Za-z0-9._-]/_}"
+  metadata_file="$WORK_DIR/$safe.json"
+  gh api -H 'Accept: application/vnd.github+json' "/repos/$repo/actions/artifacts?name=$artifact&per_page=100" > "$metadata_file" || return 23
+  run_id="$(python3 - "$commit" "$metadata_file" <<'PY'
 import json,sys
-expected=sys.argv[1]; data=json.load(sys.stdin)
+expected=sys.argv[1]
+with open(sys.argv[2],encoding='utf-8') as stream: data=json.load(stream)
 items=[a for a in data.get('artifacts',[]) if not a.get('expired') and (a.get('workflow_run') or {}).get('head_sha')==expected]
 items.sort(key=lambda a:a.get('created_at',''), reverse=True)
 if items: print(items[0]['workflow_run']['id'])
