@@ -1,0 +1,8 @@
+* @f2re
+
+# Release and security-sensitive surfaces
+/.github/workflows/ @f2re
+/project-control/deploy/ @f2re
+/project-control/scripts/ @f2re
+/project-control/src/ @f2re
+/SECURITY.md @f2re
