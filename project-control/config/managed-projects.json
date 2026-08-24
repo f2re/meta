@@ -26,6 +26,7 @@
       },
       "release": {
         "artifactPattern": "docomator-*-project-control.f2re.zip",
+        "actionsArtifact": "docomator-project-control-{commit}",
         "ci": "github-actions"
       }
     },
@@ -52,6 +53,7 @@
       },
       "release": {
         "artifactPattern": "planer-solving-*-project-control.f2re.zip",
+        "actionsArtifact": "planner-solving-project-control-{commit}",
         "ci": "github-actions"
       }
     },
@@ -78,6 +80,7 @@
       },
       "release": {
         "artifactPattern": "kafedra-planner-*-project-control.f2re.zip",
+        "actionsArtifact": "kafedra-planner-project-control-{commit}",
         "ci": "github-actions"
       }
     }
