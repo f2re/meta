@@ -15,7 +15,7 @@ Project Control — локальный сервис единого монито�
 
 Latest release: <https://github.com/f2re/meta/releases/latest>
 
-## Что показывает интерфейс 0.5.7
+## Что показывает интерфейс 0.5.8
 
 UI выполняет фактический runtime discovery:
 
@@ -30,6 +30,15 @@ UI выполняет фактический runtime discovery:
 Кнопка **«Пересканировать сервер»** принудительно сбрасывает discovery cache. Если privileged executor неисправен, discovery и UI остаются доступны, а update/restart блокируются до восстановления executor.
 
 Frontend работает напрямую на `:9090` и за nginx path prefix. Browser update использует блоки по 512 КиБ и отдельную apply-job; тот же chunked/job-контур используется `deploy-stack.sh`.
+
+Карточка приложения принимает два типа пакета:
+
+- Project Control wrapper: `.f2re.zip` / `.zip` — проверяется manifest, SHA-256, adapter identity и, если включена политика подписи, Ed25519 signature;
+- штатный native bundle проекта: `.tar.gz`, `.tgz`, `.tar` — безопасно распаковывается, должен содержать `VERSION` и allowlisted verify/install/update script выбранного adapter, а после установки обязательно проверяются фактическая версия, systemd и HTTP health.
+
+`PROJECT_CONTROL_REQUIRE_SIGNATURE=true` intentionally переводит контроллер в строгий режим: raw TAR отклоняется, принимается только подписанный `.f2re.zip`.
+
+Важно: `f2re-meta-*.tar.gz` и `project-control-*.tar.gz` — комплекты установки/обновления **самого Project Control**, а не одного из управляемых приложений. Их не следует бросать в карточку Docomator/Planner/Kafedra. Meta bundle проверяется `verify.sh` и применяется `install.sh`; карточки принимают native bundle именно выбранного приложения.
 
 ## Установка стабильного meta-bundle
 
@@ -183,8 +192,8 @@ sudo ./deploy-stack.sh --url https://server.example/project-control/
 1. Установить Project Control из meta-bundle либо F2RE Stack.
 2. Открыть `http://<IP>:9090/` или nginx URL и ввести четырёхзначный PIN.
 3. Нажать «Пересканировать сервер».
-4. Перетащить готовый `*-project-control.f2re.zip` на карточку проекта.
-5. UI передаст ZIP чанками, сервер проверит identity/SHA-256/adapter/подпись и запустит allowlisted installer отдельной job.
+4. Перетащить на карточку выбранного проекта либо готовый `*-project-control.f2re.zip`, либо штатный native bundle `.tar.gz` / `.tgz` / `.tar` этого же проекта.
+5. UI передаст архив чанками. Wrapper ZIP проходит manifest/identity/SHA/signature policy; native TAR — безопасную распаковку, проверку `VERSION` и allowlisted native contract. Затем root executor запускает только статически разрешённый installer отдельной job.
 6. Операция считается успешной только после совпадения активной версии и systemd/HTTP health-check.
 
 Уже существующие установки обнаруживаются по фактическим признакам даже до первого управляемого обновления. Project Control ведёт историю операций.
@@ -195,7 +204,7 @@ sudo ./deploy-stack.sh --url https://server.example/project-control/
 
 PIN веб-доступа при первой установке сохраняется в `/root/project-control-access.txt`.
 
-Для обязательной криптографической аутентификации release package установите `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` и доверенные Ed25519 public keys в `/etc/project-control/trusted-keys/<keyId>.pem`.
+Для обязательной криптографической аутентификации release package установите `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` и доверенные Ed25519 public keys в `/etc/project-control/trusted-keys/<keyId>.pem`. В строгом режиме native TAR через UI отклоняется, поскольку raw TAR не несёт Project Control signature envelope.
 
 ## Отдельная локальная сборка контроллера
 
@@ -217,7 +226,7 @@ TARGET_ASTRA_VERSION=1.7 \
 
 ## CI и релизы
 
-`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix tests, dialog compatibility tests, Python-тесты chunked deployment client, stack pack/dry-run и compatibility checks.
+`npm run check` выполняет syntax-check backend/frontend, discovery/nginx/proxy-prefix tests, dialog compatibility tests, package-format/UUID tests, Python-тесты chunked deployment client, stack pack/dry-run и compatibility checks.
 
 Дополнительно CI реально запускает полный F2RE Stack с `--refs latest` без Docker, сверяет wrapper `sourceCommit` с разрешённым snapshot каждого проекта, затем независимо собирает и устанавливает meta release candidate в официальных Astra Linux 1.7 и 1.8 UBI.
 
