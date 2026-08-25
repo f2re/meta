@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { ADAPTERS } from "./adapters.mjs";
 import { INCOMING_DIR, SOCKET_PATH, ensureDataDirs, jsonResponse, readJsonBody } from "./common.mjs";
 import { discoverHost } from "./discovery.mjs";
+import { safeUuid } from "./identifiers.mjs";
 import { normalizeRequestPath, shouldRedirectToSlash } from "./web_utils.mjs";
 
 const VERSION = process.env.PROJECT_CONTROL_VERSION || "0.1.0";
@@ -142,11 +143,6 @@ async function receiveUpload(request) {
   }
 }
 
-function safeUuid(value, label = "идентификатор") {
-  const id = String(value || "");
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(id)) throw Object.assign(new Error(`Некорректный ${label}.`), { statusCode: 400 });
-  return id;
-}
 function uploadPaths(id) {
   const safe = safeUuid(id, "идентификатор загрузки");
   return {
