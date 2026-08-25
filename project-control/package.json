@@ -1,6 +1,6 @@
 {
   "name": "f2re-project-control",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "private": true,
   "type": "module",
   "description": "Offline project monitoring and update controller for Astra Linux",
