@@ -1,14 +1,14 @@
 {
   "schema": "f2re-managed-projects/v1",
   "controllerApi": 1,
-  "verifiedAt": "2026-08-24",
+  "verifiedAt": "2026-08-25",
   "projects": [
     {
       "projectId": "docomator",
       "displayName": "Оформлятор",
       "repository": "https://github.com/f2re/docomator",
       "defaultBranch": "main",
-      "verifiedCommit": "c0269c38a0e00a3c662cfa2ee53e9ea0b04e3aff",
+      "verifiedCommit": "254e0451188d1f89e8971edf46b90a9bc71065e2",
       "adapter": "docomator-v1",
       "nativeBundleFormat": "docomator-offline-v2",
       "currentPath": "/opt/docomator/current",

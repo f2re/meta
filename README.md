@@ -13,7 +13,7 @@
   <img alt="Node.js 24" src="https://img.shields.io/badge/runtime-Node.js%2024-43853d">
 </p>
 
-**F2RE Meta / Project Control** сканирует реальный сервер (`/opt`, systemd, TCP LISTEN, nginx), определяет установленные проекты, показывает версии/health и безопасно применяет офлайн-обновления `*.f2re.zip`. Рабочая реализация находится в [`project-control/`](project-control/).
+**F2RE Meta / Project Control** сканирует реальный сервер (`/opt`, systemd, TCP LISTEN, nginx), определяет установленные проекты, показывает версии/health и безопасно применяет офлайн-обновления. Для управляемых приложений интерфейс принимает как Project Control wrapper `*.f2re.zip`, так и штатные native bundle `.tar.gz` / `.tgz` / `.tar`. Рабочая реализация находится в [`project-control/`](project-control/).
 
 ## Скачать последнюю стабильную версию
 
@@ -25,6 +25,8 @@
 | **Все release assets** | 1.7 + 1.8 | [GitHub Releases](https://github.com/f2re/meta/releases/latest) | [SHA256SUMS](https://github.com/f2re/meta/releases/latest/download/SHA256SUMS) |
 
 Каждый стабильный выпуск имеет тег `vX.Y.Z`, versioned assets, общий `SHA256SUMS` и `release-manifest.json`.
+
+> `f2re-meta-*.tar.gz` — установочный/обновляющий комплект самого Project Control и его compatibility metadata. Это не пакет одного из управляемых приложений. Его проверяют `verify.sh` и устанавливают `install.sh`. В карточки `docomator`, `planer-solving`, `kafedra-planner` загружаются их собственные wrapper/native bundles.
 
 ## Быстрая установка Project Control
 
@@ -68,7 +70,9 @@ CI выполняет unit/contracts, реальную локальную сбо
 - сканирует TCP LISTEN через `ss`;
 - разбирает nginx `server_name`, `location`, `proxy_pass`, `client_max_body_size`;
 - проверяет HTTP health на фактическом порту;
-- принимает большие `.f2re.zip` чанками и выполняет update отдельной job;
+- принимает большие `.f2re.zip`, `.tar.gz`, `.tgz` и `.tar` чанками и выполняет update отдельной job;
+- для wrapper ZIP проверяет identity/SHA/signature policy; native TAR безопасно распаковывает и допускает только allowlisted verify/install/update scripts выбранного adapter;
+- при `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` raw TAR намеренно запрещён и принимаются только подписанные `.f2re.zip`;
 - сохраняет privilege boundary: web service непривилегирован, root executor доступен только через Unix socket;
 - применяет только статически allowlisted native installers.
 
@@ -84,7 +88,7 @@ flowchart LR
     D --> N[nginx]
     API --> U[Chunk upload / async job]
     U --> X[Root executor via Unix socket]
-    X --> V[Package identity + SHA / signature]
+    X --> V[Package identity + SHA / signature policy]
     V --> A[Allowlisted native installer]
     A --> H[systemd + HTTP health]
 ```
@@ -157,8 +161,8 @@ gh auth login
 - [`SECURITY.md`](SECURITY.md) — политика сообщений об уязвимостях;
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — требования к изменениям;
 - release assets имеют SHA-256 и immutable SemVer policy;
-- загруженный ZIP не может передать произвольную shell-команду root executor;
-- Ed25519 release signatures можно сделать обязательными через `PROJECT_CONTROL_REQUIRE_SIGNATURE=true`.
+- загруженный архив не может передать произвольную shell-команду root executor;
+- Ed25519 release signatures можно сделать обязательными через `PROJECT_CONTROL_REQUIRE_SIGNATURE=true`; в этом режиме UI принимает только подписанные `.f2re.zip`.
 
 ## Документация
 

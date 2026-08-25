@@ -59,7 +59,7 @@
     <section class="section-block">
       <div class="section-heading">
         <h2>Управляемые проекты</h2>
-        <p>Карточка показывает не только ожидаемый контракт, но и фактически обнаруженные признаки на сервере.</p>
+        <p>Карточка показывает не только ожидаемый контракт, но и фактически обнаруженные признаки на сервере. Для установки подходят подписанные/обёрнутые <code>.f2re.zip</code> и штатные native bundle <code>.tar.gz</code>, <code>.tgz</code> или <code>.tar</code>.</p>
       </div>
       <section id="projectGrid" class="project-grid" aria-label="Управляемые проекты"></section>
     </section>
@@ -112,11 +112,11 @@
       </dl>
       <div class="health-box"></div>
       <div class="project-warnings"></div>
-      <div class="drop-zone" tabindex="0" role="button" aria-label="Выбрать Project Control ZIP package">
-        <input class="file-input" type="file" accept=".zip,application/zip" hidden>
-        <strong>Перетащите сюда .f2re.zip</strong>
-        <span>или нажмите, чтобы выбрать файл</span>
-        <small>Файл передаётся чанками по 512 КиБ; установка выполняется отдельной job и не зависит от nginx timeout.</small>
+      <div class="drop-zone" tabindex="0" role="button" aria-label="Выбрать пакет Project Control ZIP или TAR">
+        <input class="file-input" type="file" accept=".zip,.tar.gz,.tgz,.tar,application/zip,application/gzip,application/x-gzip,application/x-tar" hidden>
+        <strong>Перетащите .f2re.zip или .tar.gz</strong>
+        <span>также поддерживаются .tgz и .tar</span>
+        <small>ZIP проверяется по manifest/подписи. Native TAR безопасно распаковывается, проверяется штатным verify-скриптом проекта и устанавливается через тот же job.</small>
       </div>
       <div class="progress hidden"><div class="progress-bar"></div><span class="progress-text"></span></div>
       <p class="message" aria-live="polite"></p>

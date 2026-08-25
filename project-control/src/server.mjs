@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { ADAPTERS } from "./adapters.mjs";
 import { INCOMING_DIR, SOCKET_PATH, ensureDataDirs, jsonResponse, readJsonBody } from "./common.mjs";
 import { discoverHost } from "./discovery.mjs";
+import { safeUuid } from "./identifiers.mjs";
 import { normalizeRequestPath, shouldRedirectToSlash } from "./web_utils.mjs";
 
 const VERSION = process.env.PROJECT_CONTROL_VERSION || "0.1.0";
@@ -92,6 +93,15 @@ function safeOriginalName(value) {
   const name = path.basename(String(value || "package.f2re.zip")).replace(/[^A-Za-z0-9А-Яа-яЁё._+() -]+/g, "_").slice(0, 180);
   return name || "package.f2re.zip";
 }
+function supportedPackageName(value) {
+  const name = String(value || "").toLowerCase();
+  return name.endsWith(".zip") || name.endsWith(".tar.gz") || name.endsWith(".tgz") || name.endsWith(".tar");
+}
+function assertSupportedPackageName(value) {
+  if (!supportedPackageName(value)) {
+    throw Object.assign(new Error("Нужен .f2re.zip либо native bundle .tar.gz / .tgz / .tar."), { statusCode: 400 });
+  }
+}
 function assertProject(projectId) {
   if (!Object.hasOwn(ADAPTERS, projectId)) throw Object.assign(new Error("Неизвестный проект."), { statusCode: 404 });
 }
@@ -133,11 +143,6 @@ async function receiveUpload(request) {
   }
 }
 
-function safeUuid(value, label = "идентификатор") {
-  const id = String(value || "");
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw Object.assign(new Error(`Некорректный ${label}.`), { statusCode: 400 });
-  return id;
-}
 function uploadPaths(id) {
   const safe = safeUuid(id, "идентификатор загрузки");
   return {
@@ -164,7 +169,7 @@ async function atomicJson(file, value) {
 async function startChunkedUpload(projectId, originalName, expectedSize) {
   assertProject(projectId);
   const fileName = safeOriginalName(originalName);
-  if (!fileName.toLowerCase().endsWith(".zip")) throw Object.assign(new Error("Нужен .f2re.zip / ZIP package."), { statusCode: 400 });
+  assertSupportedPackageName(fileName);
   const size = Number(expectedSize);
   if (!Number.isInteger(size) || size < 1 || size > MAX_UPLOAD_BYTES) throw Object.assign(new Error("Некорректный размер файла обновления."), { statusCode: 400 });
   const id = randomUUID();
@@ -369,7 +374,8 @@ async function route(request, response) {
       if (!requireAuth(request, response)) return;
       const projectId = updateMatch[1]; assertProject(projectId);
       const originalName = safeOriginalName(request.headers["x-file-name"]);
-      if (!originalName.toLowerCase().endsWith(".zip")) return jsonResponse(response, 400, { error: "Для Project Control требуется .f2re.zip / ZIP package." });
+      try { assertSupportedPackageName(originalName); }
+      catch (error) { return jsonResponse(response, error.statusCode || 400, { error: error.message }); }
       const upload = await receiveUpload(request);
       try {
         const result = await executorRequest("/apply", { projectId, uploadPath: upload.path, originalName, uploadSha256: upload.sha256, uploadSize: upload.size });

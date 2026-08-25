@@ -41,6 +41,10 @@ function formatBytes(value) {
 }
 function operationLabel(value) { return ({ update: "Обновление", install: "Установка", restart: "Перезапуск" })[value] || value || "—"; }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function supportedPackageName(value) {
+  const name = String(value || "").toLowerCase();
+  return name.endsWith(".zip") || name.endsWith(".tar.gz") || name.endsWith(".tgz") || name.endsWith(".tar");
+}
 
 async function api(relative, options = {}) {
   const response = await fetch(endpoint(relative), { ...options, headers: authHeaders(options.headers || {}) });
@@ -134,7 +138,7 @@ function healthText(project) {
   if (project.healthy) return `Health OK${project.health?.statusCode ? ` · HTTP ${project.health.statusCode}` : ""}`;
   if (discovery.runtimeHealthy) return `Работает по независимому сканированию · ${discovery.health?.statusCode ? `HTTP ${discovery.health.statusCode}` : "health OK"}`;
   if (!project.installed && project.detected) return "Обнаружены признаки проекта, но штатная установка Project Control не подтверждена.";
-  if (!project.installed) return "Штатная установка не обнаружена. Можно установить готовый .f2re.zip.";
+  if (!project.installed) return "Штатная установка не обнаружена. Можно установить .f2re.zip или штатный native TAR bundle.";
   if (project.health?.error) return `Health не прошёл: ${project.health.error}`;
   if (project.health?.statusCode) return `Health HTTP ${project.health.statusCode}`;
   const stopped = (project.requiredServices || []).filter((service) => !service.active).map((service) => service.name);
@@ -208,9 +212,9 @@ async function uploadPackage(project, file, card) {
   const progress = card.querySelector(".progress");
   const bar = card.querySelector(".progress-bar");
   const text = card.querySelector(".progress-text");
-  if (!file.name.toLowerCase().endsWith(".zip")) {
+  if (!supportedPackageName(file.name)) {
     message.className = "message error";
-    message.textContent = "Выберите Project Control package с расширением .f2re.zip / .zip.";
+    message.textContent = "Выберите .f2re.zip / .zip либо native bundle .tar.gz / .tgz / .tar.";
     return;
   }
   let uploadId = null;
@@ -339,7 +343,7 @@ async function refresh(rescan = false) {
   renderHistory(data.history || []);
   renderDiscovery(data.discovery || {}, data.executorError || null);
   securityBanner.classList.toggle("hidden", data.requireSignature !== false);
-  securityBanner.textContent = data.requireSignature === false ? "Подпись release package необязательна. SHA-256 проверяется, но для общего сегмента сети рекомендуется PROJECT_CONTROL_REQUIRE_SIGNATURE=true." : "";
+  securityBanner.textContent = data.requireSignature === false ? "Подпись release package необязательна. SHA-256 проверяется; native TAR допускается только в этом режиме. Для общего сегмента сети рекомендуется PROJECT_CONTROL_REQUIRE_SIGNATURE=true и подписанные .f2re.zip." : "";
   setBoot(data.executorError ? "error" : "success", data.executorError ? `UI и discovery работают, но executor недоступен: ${data.executorError}` : `Интерфейс, API и executor работают · base ${apiRoot.pathname}`);
   if (!data.executorError) setTimeout(() => bootStatus.classList.add("hidden"), 2500);
   globalStatus.textContent = data.executorError ? "Сканирование доступно; системные операции заблокированы до восстановления executor." : (data.operationRunning ? "Executor выполняет системную операцию." : `Проверено: ${formatTime(data.discovery?.scannedAt || new Date().toISOString())}`);

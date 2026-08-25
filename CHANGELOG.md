@@ -4,6 +4,24 @@
 
 Формат основан на Keep a Changelog, версии проекта следуют Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
+## [0.5.8] - 2026-08-25
+
+### Fixed
+
+- Исправлен release pipeline: после создания нового GitHub Release тег явно подтягивается из `origin` перед проверкой `sourceCommit`. Именно отсутствие локального `v0.5.7` приводило к падению уже после успешной сборки Astra 1.7/1.8, controller bundle, публикации assets и проверки SHA-256.
+- Интерфейс и API Project Control больше не отбрасывают штатные native bundles только из-за формата TAR.
+
+### Added
+
+- Карточки управляемых проектов принимают `.f2re.zip` / `.zip`, а также native `.tar.gz`, `.tgz` и `.tar`.
+- Native TAR распаковывается существующим безопасным extractor, должен содержать штатный install/update script выбранного adapter и корректный `VERSION`; после установки версия и health-check подтверждаются так же, как для `.f2re.zip`.
+- При `PROJECT_CONTROL_REQUIRE_SIGNATURE=true` raw TAR намеренно запрещён: в защищённом режиме остаются только подписанные `.f2re.zip`.
+- Добавлен контрактный тест форматов пакетов UI/API/executor.
+
+### Changed
+
+- Project Control version: `0.5.7` → `0.5.8`.
+
 ## [0.5.7] - 2026-08-24
 
 ### Added
@@ -164,6 +182,7 @@
 - Exact-SHA compatibility manifest для `docomator`, `planer-solving`, `kafedra-planner`.
 - Astra Linux meta-bundle и deployment smoke.
 
+[0.5.8]: https://github.com/f2re/meta/releases/tag/v0.5.8
 [0.5.7]: https://github.com/f2re/meta/releases/tag/v0.5.7
 [0.5.6]: https://github.com/f2re/meta/releases/tag/v0.5.6
 [0.5.5]: https://github.com/f2re/meta/releases/tag/v0.5.5

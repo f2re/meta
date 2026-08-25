@@ -35,6 +35,11 @@ function safeVersion(value) {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(value);
 }
 
+function isNativeArchiveName(value) {
+  const name = String(value || "").toLowerCase();
+  return name.endsWith(".tar.gz") || name.endsWith(".tgz") || name.endsWith(".tar");
+}
+
 function serviceManifestFor(raw) {
   const manifest = raw?.manifest;
   if (!manifest || typeof manifest !== "object") throw new Error("Отсутствует manifest Project Control.");
@@ -213,6 +218,19 @@ async function nativeBundleRoot(extractRoot, adapter) {
   return candidates[0];
 }
 
+async function nativeBundleVersion(bundleRoot, adapter) {
+  const versionPath = path.join(bundleRoot, adapter.versionFile);
+  let version;
+  try {
+    version = (await fs.readFile(versionPath, "utf8")).trim();
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new Error(`В native bundle отсутствует ${adapter.versionFile}; версия пакета не может быть подтверждена.`);
+    throw error;
+  }
+  if (!safeVersion(version)) throw new Error(`Некорректная версия в native bundle: ${version || "пусто"}.`);
+  return version;
+}
+
 async function applyPackage({ projectId, uploadPath, originalName, uploadSha256 }) {
   if (operationRunning) throw Object.assign(new Error("Уже выполняется другая операция обновления."), { statusCode: 409 });
   operationRunning = true;
@@ -224,23 +242,47 @@ async function applyPackage({ projectId, uploadPath, originalName, uploadSha256 
   const logPath = path.join(LOG_DIR, `${opId}.log`);
   let manifest = null;
   let before = null;
+  let expectedVersion = null;
+  let signatureState = null;
+  let payloadSha256 = null;
+  let sourceCommit = null;
   try {
     const safeUpload = await validateIncoming(uploadPath);
     const calculatedUploadSha = await sha256File(safeUpload);
     if (uploadSha256 && calculatedUploadSha !== uploadSha256) throw new Error("SHA-256 upload изменился между API и executor.");
-    await fs.mkdir(wrapperStage, { recursive: true, mode: 0o750 });
-    const inspected = await inspectPackage(safeUpload);
-    manifest = inspected.manifest;
-    if (manifest.projectId !== projectId) throw new Error(`Выбран ${projectId}, но package предназначен для ${manifest.projectId}.`);
     const adapter = adapterForProject(projectId);
     before = await currentVersion(adapter);
-    await appendLog(logPath, "", `Project Control operation ${opId}\nproject=${projectId}\nversion=${manifest.version}\npackage=${originalName || path.basename(safeUpload)}\nsha256=${calculatedUploadSha}\nsignature=${inspected.signatureState}\n`);
-    const { stdout: payloadStdout } = await execFileAsync(PYTHON_BIN, [PACKAGE_TOOL, "extract-payload", safeUpload, wrapperStage], {
-      encoding: "utf8", timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024
-    });
-    const payloadPath = payloadStdout.trim();
-    await runLogged(PYTHON_BIN, [PACKAGE_TOOL, "extract-native", payloadPath, nativeStage], { cwd: stage, logPath, timeoutMs: 15 * 60 * 1000 });
-    const bundleRoot = await nativeBundleRoot(nativeStage, adapter);
+    await fs.mkdir(stage, { recursive: true, mode: 0o750 });
+
+    let bundleRoot;
+    if (isNativeArchiveName(originalName)) {
+      if (REQUIRE_SIGNATURE) {
+        throw new Error("Native TAR bundle не имеет подписи Project Control. При PROJECT_CONTROL_REQUIRE_SIGNATURE=true используйте подписанный .f2re.zip.");
+      }
+      await runLogged(PYTHON_BIN, [PACKAGE_TOOL, "extract-native", safeUpload, nativeStage], { cwd: stage, logPath, timeoutMs: 15 * 60 * 1000 });
+      bundleRoot = await nativeBundleRoot(nativeStage, adapter);
+      expectedVersion = await nativeBundleVersion(bundleRoot, adapter);
+      signatureState = "native-unsigned";
+      payloadSha256 = calculatedUploadSha;
+      sourceCommit = null;
+      manifest = { version: expectedVersion, payload: { sha256: calculatedUploadSha }, sourceCommit: null };
+    } else {
+      const inspected = await inspectPackage(safeUpload);
+      manifest = inspected.manifest;
+      if (manifest.projectId !== projectId) throw new Error(`Выбран ${projectId}, но package предназначен для ${manifest.projectId}.`);
+      expectedVersion = manifest.version;
+      signatureState = inspected.signatureState;
+      payloadSha256 = manifest.payload.sha256;
+      sourceCommit = manifest.sourceCommit || null;
+      const { stdout: payloadStdout } = await execFileAsync(PYTHON_BIN, [PACKAGE_TOOL, "extract-payload", safeUpload, wrapperStage], {
+        encoding: "utf8", timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024
+      });
+      const payloadPath = payloadStdout.trim();
+      await runLogged(PYTHON_BIN, [PACKAGE_TOOL, "extract-native", payloadPath, nativeStage], { cwd: stage, logPath, timeoutMs: 15 * 60 * 1000 });
+      bundleRoot = await nativeBundleRoot(nativeStage, adapter);
+    }
+
+    await appendLog(logPath, "", `Project Control operation ${opId}\nproject=${projectId}\nversion=${expectedVersion}\npackage=${originalName || path.basename(safeUpload)}\nsha256=${calculatedUploadSha}\nsignature=${signatureState}\n`);
     if (adapter.native.verify) {
       const verifyScript = path.join(bundleRoot, adapter.native.verify.script);
       await runLogged("/bin/bash", [verifyScript, ...adapter.native.verify.args], { cwd: bundleRoot, logPath });
@@ -251,8 +293,8 @@ async function applyPackage({ projectId, uploadPath, originalName, uploadSha256 
     const history = await readHistory();
     const afterStatus = await projectStatus(adapter, history);
     if (!afterStatus.installed) throw new Error("После installer приложение не обнаружено.");
-    if (afterStatus.version !== manifest.version) {
-      throw new Error(`Installer завершился, но активна версия ${afterStatus.version || "не определена"}, ожидалась ${manifest.version}.`);
+    if (afterStatus.version !== expectedVersion) {
+      throw new Error(`Installer завершился, но активна версия ${afterStatus.version || "не определена"}, ожидалась ${expectedVersion}.`);
     }
     if (!afterStatus.healthy) throw new Error("После installer штатный service/health-check контроллера не подтверждён.");
     const finishedAt = new Date().toISOString();
@@ -268,9 +310,9 @@ async function applyPackage({ projectId, uploadPath, originalName, uploadSha256 
       finishedAt,
       packageName: originalName || path.basename(safeUpload),
       packageSha256: calculatedUploadSha,
-      payloadSha256: manifest.payload.sha256,
-      sourceCommit: manifest.sourceCommit || null,
-      signature: inspected.signatureState,
+      payloadSha256,
+      sourceCommit,
+      signature: signatureState,
       logPath
     };
     await appendHistory(record);
@@ -285,7 +327,7 @@ async function applyPackage({ projectId, uploadPath, originalName, uploadSha256 
       status: "failed",
       action: before?.installed ? "update" : "install",
       fromVersion: before?.version || null,
-      toVersion: manifest?.version || null,
+      toVersion: expectedVersion || manifest?.version || null,
       startedAt,
       finishedAt,
       packageName: originalName || path.basename(uploadPath),

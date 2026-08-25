@@ -344,6 +344,10 @@ jobs:
             sha256sum -c --strict project-control-linux-x64.tar.gz.sha256
           )
 
+          # A tag created moments earlier by `gh release create --target` exists on
+          # origin but not in this checkout. Fetch it explicitly before resolving
+          # the immutable release commit; this is what broke v0.5.7 verification.
+          git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
           RELEASE_COMMIT="$(git rev-list -n 1 "$TAG")"
           python3 - release-verify/release-manifest.json "$VERSION" "$TAG" "$RELEASE_COMMIT" <<'PY'
           import json, sys
