@@ -1,4 +1,4 @@
-name: Archive hunt MW-Nowcast
+name: Recover MW-Nowcast by repo ID
 
 on:
   push:
@@ -10,138 +10,97 @@ permissions:
   contents: read
 
 jobs:
-  hunt:
+  recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
-      - name: Search Common Crawl and web archives
+      - name: Scan GH Archive by immutable repo ID
         shell: bash
         run: |
           set -eu
-          mkdir -p archive_hunt
+          mkdir -p idscan
           python3 - <<'PY'
-          import gzip, io, json, os, re, urllib.parse, urllib.request, urllib.error
+          import concurrent.futures, datetime as dt, gzip, json, urllib.request
 
-          UA={"User-Agent":"mw-nowcast-recovery/4.0"}
+          TARGET_ID=1372608490
+          START=dt.datetime(2026,9,16,5)
+          END=dt.datetime(2026,9,19,3)
+          hours=[]
+          x=START
+          while x<=END:
+              hours.append(x)
+              x+=dt.timedelta(hours=1)
 
-          def fetch(url, timeout=45, max_bytes=10_000_000):
-              req=urllib.request.Request(url,headers=UA)
+          # Search raw bytes for decimal repo id first to avoid JSON parsing all events.
+          needles=[
+              f'"repo":{{"id":{TARGET_ID},'.encode(),
+              f'"repo": {{"id": {TARGET_ID},'.encode(),
+              f'"id":{TARGET_ID},"name"'.encode(),
+              f'"id": {TARGET_ID}, "name"'.encode(),
+          ]
+
+          def scan(t):
+              url=f"https://data.gharchive.org/{t:%Y-%m-%d}-{t.hour}.json.gz"
+              hits=[]
               try:
-                  with urllib.request.urlopen(req,timeout=timeout) as r:
-                      return r.status, r.geturl(), dict(r.headers.items()), r.read(max_bytes)
-              except urllib.error.HTTPError as e:
-                  return e.code,e.geturl(),dict(e.headers.items()) if e.headers else {},e.read(max_bytes)
+                  req=urllib.request.Request(url,headers={"User-Agent":"mw-nowcast-id-recovery/1.0"})
+                  with urllib.request.urlopen(req,timeout=180) as resp, gzip.GzipFile(fileobj=resp) as gz:
+                      for raw in gz:
+                          if not any(n in raw for n in needles):
+                              continue
+                          try:e=json.loads(raw)
+                          except:continue
+                          if (e.get("repo") or {}).get("id")==TARGET_ID:
+                              hits.append(e)
+                  return t,hits,None
               except Exception as e:
-                  return None,url,{},repr(e).encode()
+                  return t,[],repr(e)
 
-          # Discover current Common Crawl indexes.
-          status,final,hdr,body=fetch("https://index.commoncrawl.org/collinfo.json")
-          print("collinfo",status,final,len(body))
-          with open("archive_hunt/collinfo.json","wb") as f:f.write(body)
-          try: indexes=json.loads(body)
-          except Exception: indexes=[]
+          events=[]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+              futs=[ex.submit(scan,h) for h in hours]
+              for f in concurrent.futures.as_completed(futs):
+                  t,hits,err=f.result()
+                  if hits or err:
+                      print(t.isoformat(), "events",len(hits),"err",err)
+                  events.extend(hits)
 
-          # newest first; query enough collections to cover recent 2026 crawls
-          indexes=[x for x in indexes if "2026" in x.get("id","")][:12]
-          print("indexes",[x.get("id") for x in indexes])
+          events.sort(key=lambda e:e.get("created_at",""))
+          with open("idscan/events.json","w",encoding="utf-8") as f:
+              json.dump(events,f,ensure_ascii=False,indent=2)
 
-          patterns=[
-              "github.com/microsoft/MW-Nowcast*",
-              "api.github.com/repos/microsoft/MW-Nowcast*",
-              "raw.githubusercontent.com/microsoft/MW-Nowcast*",
-              "codeload.github.com/microsoft/MW-Nowcast*",
-              "github.com/microsoft/MW-Nowcast/releases/download/v1.0.0/mw_nowcast_us_9to36_128.pth",
-          ]
-          records=[]
-          for idx in indexes:
-              api=idx.get("cdx-api")
-              if not api: continue
-              for pat in patterns:
-                  qs=urllib.parse.urlencode({"url":pat,"output":"json","matchType":"prefix"})
-                  u=api+"?"+qs
-                  st,fu,hh,bb=fetch(u,timeout=60,max_bytes=5_000_000)
-                  print("CC",idx.get("id"),pat,st,len(bb))
-                  if st==200:
-                      for line in bb.splitlines():
-                          try:
-                              rec=json.loads(line)
-                              rec["_index"]=idx.get("id")
-                              records.append(rec)
-                          except Exception: pass
+          compact=[]
+          for e in events:
+              p=e.get("payload") or {}
+              r={"id":e.get("id"),"type":e.get("type"),"created_at":e.get("created_at"),
+                 "actor":(e.get("actor") or {}).get("login"),"repo":e.get("repo")}
+              if e.get("type")=="PushEvent":
+                  r["push"]={k:p.get(k) for k in ["push_id","size","distinct_size","ref","head","before"]}
+                  r["commits"]=p.get("commits")
+              elif e.get("type")=="CreateEvent":
+                  r["create"]={k:p.get(k) for k in ["ref","ref_type","master_branch","description","pusher_type"]}
+              elif e.get("type")=="PullRequestEvent":
+                  pr=p.get("pull_request") or {}
+                  r["action"]=p.get("action")
+                  r["number"]=p.get("number")
+                  r["pr"]={
+                    "id":pr.get("id"),"merged":pr.get("merged"),"merge_commit_sha":pr.get("merge_commit_sha"),
+                    "head":pr.get("head"),"base":pr.get("base"),
+                    "title":pr.get("title"),"body":pr.get("body"),
+                  }
+              elif e.get("type")=="ReleaseEvent":
+                  r["release"]=p.get("release")
+              else:
+                  r["payload"]=p
+              compact.append(r)
+          with open("idscan/compact.json","w",encoding="utf-8") as f:
+              json.dump(compact,f,ensure_ascii=False,indent=2)
 
-          # deduplicate by filename/offset/url
-          uniq=[]
-          seen=set()
-          for r in records:
-              k=(r.get("filename"),r.get("offset"),r.get("url"))
-              if k in seen: continue
-              seen.add(k); uniq.append(r)
-          with open("archive_hunt/commoncrawl_records.json","w",encoding="utf-8") as f:
-              json.dump(uniq,f,ensure_ascii=False,indent=2)
-          print("COMMONCRAWL RECORDS",len(uniq))
-          print(json.dumps(uniq[:30],ensure_ascii=False,indent=2))
-
-          # Pull WARC records when available and extract HTTP payload.
-          extracted=[]
-          for n,r in enumerate(uniq[:40]):
-              fn=r.get("filename"); off=r.get("offset"); ln=r.get("length")
-              if not(fn and off and ln): continue
-              url="https://data.commoncrawl.org/"+fn
-              req=urllib.request.Request(url,headers={**UA,"Range":f"bytes={off}-{int(off)+int(ln)-1}"})
-              try:
-                  with urllib.request.urlopen(req,timeout=60) as resp:
-                      chunk=resp.read(int(ln)+1024)
-                  try: raw=gzip.decompress(chunk)
-                  except Exception:
-                      try:
-                          with gzip.GzipFile(fileobj=io.BytesIO(chunk)) as g: raw=g.read()
-                      except Exception: raw=chunk
-                  # WARC headers + HTTP headers + body; keep complete small record
-                  path=f"archive_hunt/cc_record_{n:02d}.warc"
-                  with open(path,"wb") as f:f.write(raw)
-                  extracted.append({"record":r,"path":path,"bytes":len(raw)})
-                  print("EXTRACTED",n,r.get("url"),len(raw))
-              except Exception as e:
-                  print("EXTRACT ERR",n,repr(e))
-          with open("archive_hunt/extracted.json","w",encoding="utf-8") as f:
-              json.dump(extracted,f,ensure_ascii=False,indent=2)
-
-          # URLScan public search.
-          qs=[
-              "domain:github.com AND MW-Nowcast",
-              "domain:github.com AND filename:mw_nowcast_us_9to36_128.pth",
-              "domain:release-assets.githubusercontent.com AND mw_nowcast",
-              "domain:raw.githubusercontent.com AND MW-Nowcast",
-          ]
-          for i,q in enumerate(qs):
-              u="https://urlscan.io/api/v1/search/?"+urllib.parse.urlencode({"q":q,"size":"100"})
-              st,fu,hh,bb=fetch(u,timeout=45,max_bytes=5_000_000)
-              print("URLSCAN",i,st,len(bb),bb[:1000].decode("utf-8","replace"))
-              with open(f"archive_hunt/urlscan_{i}.json","wb") as f:f.write(bb)
-
-          # Arquivo.pt text/CDX-like search.
-          targets=[
-              "https://github.com/microsoft/MW-Nowcast",
-              "https://github.com/microsoft/MW-Nowcast/releases/tag/v1.0.0",
-              "https://github.com/microsoft/MW-Nowcast/releases/download/v1.0.0/mw_nowcast_us_9to36_128.pth",
-          ]
-          for i,t in enumerate(targets):
-              u="https://arquivo.pt/textsearch?"+urllib.parse.urlencode({
-                  "q":t,"versionHistory":t,"maxItems":"50","prettyPrint":"true"
-              })
-              st,fu,hh,bb=fetch(u,timeout=45,max_bytes=5_000_000)
-              print("ARQUIVO",i,st,len(bb),bb[:1200].decode("utf-8","replace"))
-              with open(f"archive_hunt/arquivo_{i}.json","wb") as f:f.write(bb)
-
-          # Memento TimeTravel aggregator.
-          for i,t in enumerate(targets[:2]):
-              u="https://timetravel.mementoweb.org/api/json/20260918/"+t
-              st,fu,hh,bb=fetch(u,timeout=45,max_bytes=2_000_000)
-              print("MEMENTO",i,st,len(bb),bb[:1200].decode("utf-8","replace"))
-              with open(f"archive_hunt/memento_{i}.json","wb") as f:f.write(bb)
+          print("=== EVENTS FOR REPO ID",TARGET_ID,"===")
+          print(json.dumps(compact,ensure_ascii=False,indent=2))
+          print("TOTAL",len(events))
           PY
-
       - uses: actions/upload-artifact@v4
         with:
-          name: mw-nowcast-archive-hunt
-          path: archive_hunt
+          name: mw-nowcast-idscan
+          path: idscan
