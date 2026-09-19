@@ -1,4 +1,4 @@
-name: Recover MW-Nowcast traces
+name: Probe MW-Nowcast recovery sources
 
 on:
   push:
@@ -10,131 +10,138 @@ permissions:
   contents: read
 
 jobs:
-  recover:
+  probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
-      - name: Scan GH Archive for MW-Nowcast
+      - name: Probe caches and archive APIs
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -u
+          mkdir -p probe
           python3 - <<'PY'
-          import concurrent.futures
-          import datetime as dt
-          import gzip
-          import io
           import json
+          import os
+          import urllib.error
+          import urllib.parse
           import urllib.request
 
-          TARGET = "microsoft/MW-Nowcast"
-          TARGET_BYTES = b'"name":"microsoft/MW-Nowcast"'
-          START = dt.datetime(2026, 9, 16, 6)
-          END = dt.datetime(2026, 9, 18, 6)
+          targets = {}
+          def add(name, url, headers=None):
+              targets[name] = (url, headers or {})
 
-          hours = []
-          cur = START
-          while cur <= END:
-              hours.append(cur)
-              cur += dt.timedelta(hours=1)
+          repo = "https://github.com/microsoft/MW-Nowcast"
+          sha = "871c21ef3a0612b4e3fa476367a4d1aea50c5004"
+          asset_id = "571727871"
 
-          def scan_hour(t):
-              url = f"https://data.gharchive.org/{t:%Y-%m-%d}-{t.hour}.json.gz"
-              found = []
-              try:
-                  req = urllib.request.Request(url, headers={"User-Agent": "mw-nowcast-recovery/1.0"})
-                  with urllib.request.urlopen(req, timeout=180) as resp:
-                      with gzip.GzipFile(fileobj=resp) as gz:
-                          for raw in gz:
-                              if TARGET_BYTES not in raw:
-                                  continue
-                              try:
-                                  event = json.loads(raw)
-                              except Exception:
-                                  continue
-                              if event.get("repo", {}).get("name") == TARGET:
-                                  found.append(event)
-                  return t, url, found, None
-              except Exception as exc:
-                  return t, url, [], repr(exc)
+          add("repos_ecosystems",
+              "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories/microsoft%2FMW-Nowcast")
+          add("commits_ecosystems",
+              "https://commits.ecosyste.ms/api/v1/hosts/GitHub/repositories/microsoft%2FMW-Nowcast")
+          add("timeline_encoded",
+              "https://timeline.ecosyste.ms/api/v1/events/microsoft%2FMW-Nowcast?per_page=100")
+          add("timeline_path",
+              "https://timeline.ecosyste.ms/api/v1/events/microsoft/MW-Nowcast?per_page=100")
 
-          results = []
-          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-              futures = [pool.submit(scan_hour, h) for h in hours]
-              for fut in concurrent.futures.as_completed(futures):
-                  t, url, found, err = fut.result()
-                  print(f"{t:%Y-%m-%d %H}: {len(found)} event(s)" + (f" ERROR={err}" if err else ""))
-                  results.extend(found)
+          archives = {
+              "archive_api_tag": "https://api.github.com/repos/microsoft/MW-Nowcast/zipball/v1.0.0",
+              "archive_codeload_tag": "https://codeload.github.com/microsoft/MW-Nowcast/zip/refs/tags/v1.0.0",
+              "archive_github_tag": "https://github.com/microsoft/MW-Nowcast/archive/refs/tags/v1.0.0.zip",
+              "archive_codeload_sha": f"https://codeload.github.com/microsoft/MW-Nowcast/zip/{sha}",
+              "archive_api_sha": f"https://api.github.com/repos/microsoft/MW-Nowcast/zipball/{sha}",
+          }
+          for name, archive_url in archives.items():
+              q = urllib.parse.urlencode({"url": archive_url})
+              add(name + "_list", "https://archives.ecosyste.ms/api/v1/archives/list?" + q)
+              add(name + "_readme", "https://archives.ecosyste.ms/api/v1/archives/readme?" + q)
 
-          results.sort(key=lambda e: e.get("created_at", ""))
-          with open("mw_events.jsonl", "w", encoding="utf-8") as f:
-              for event in results:
-                  f.write(json.dumps(event, ensure_ascii=False) + "\n")
+          add("swh_revision",
+              f"https://archive.softwareheritage.org/api/1/revision/{sha}/")
+          quoted_origin = urllib.parse.quote(repo, safe="")
+          add("swh_origin",
+              f"https://archive.softwareheritage.org/api/1/origin/{quoted_origin}/get/")
 
-          summary = []
-          for event in results:
-              payload = event.get("payload") or {}
-              row = {
-                  "id": event.get("id"),
-                  "type": event.get("type"),
-                  "created_at": event.get("created_at"),
-                  "actor": (event.get("actor") or {}).get("login"),
-                  "repo": event.get("repo"),
+          add("github_raw_readme_sha",
+              f"https://raw.githubusercontent.com/microsoft/MW-Nowcast/{sha}/README.md")
+          add("github_codeload_sha",
+              f"https://codeload.github.com/microsoft/MW-Nowcast/zip/{sha}")
+          add("github_release_asset_api",
+              f"https://api.github.com/repos/microsoft/MW-Nowcast/releases/assets/{asset_id}",
+              {"Accept":"application/octet-stream"})
+          add("github_release_asset_metadata",
+              f"https://api.github.com/repos/microsoft/MW-Nowcast/releases/assets/{asset_id}",
+              {"Accept":"application/vnd.github+json"})
+          add("github_release_file",
+              "https://github.com/microsoft/MW-Nowcast/releases/download/v1.0.0/mw_nowcast_us_9to36_128.pth",
+              {"Range":"bytes=0-1023"})
+
+          results = {}
+          for name, (url, headers) in targets.items():
+              hdr = {
+                  "User-Agent": "mw-nowcast-recovery/1.0",
+                  **headers,
               }
-              if event.get("type") == "PushEvent":
-                  row["push"] = {
-                      "ref": payload.get("ref"),
-                      "before": payload.get("before"),
-                      "head": payload.get("head"),
-                      "size": payload.get("size"),
-                      "distinct_size": payload.get("distinct_size"),
-                      "commits": payload.get("commits"),
+              req = urllib.request.Request(url, headers=hdr)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      body = r.read(2_000_000)
+                      entry = {
+                          "ok": True,
+                          "status": getattr(r, "status", None),
+                          "final_url": r.geturl(),
+                          "headers": dict(r.headers.items()),
+                          "bytes_read": len(body),
+                      }
+              except urllib.error.HTTPError as e:
+                  body = e.read(2_000_000)
+                  entry = {
+                      "ok": False,
+                      "status": e.code,
+                      "final_url": e.geturl(),
+                      "headers": dict(e.headers.items()) if e.headers else {},
+                      "error": repr(e),
+                      "bytes_read": len(body),
                   }
-              elif event.get("type") == "ReleaseEvent":
-                  release = payload.get("release") or {}
-                  row["action"] = payload.get("action")
-                  row["release"] = {
-                      "id": release.get("id"),
-                      "node_id": release.get("node_id"),
-                      "tag_name": release.get("tag_name"),
-                      "target_commitish": release.get("target_commitish"),
-                      "name": release.get("name"),
-                      "draft": release.get("draft"),
-                      "prerelease": release.get("prerelease"),
-                      "created_at": release.get("created_at"),
-                      "published_at": release.get("published_at"),
-                      "zipball_url": release.get("zipball_url"),
-                      "tarball_url": release.get("tarball_url"),
-                      "assets": [
-                          {
-                              "id": a.get("id"),
-                              "node_id": a.get("node_id"),
-                              "name": a.get("name"),
-                              "size": a.get("size"),
-                              "digest": a.get("digest"),
-                              "url": a.get("url"),
-                              "browser_download_url": a.get("browser_download_url"),
-                              "created_at": a.get("created_at"),
-                              "updated_at": a.get("updated_at"),
-                          }
-                          for a in (release.get("assets") or [])
-                      ],
+              except Exception as e:
+                  body = b""
+                  entry = {
+                      "ok": False,
+                      "status": None,
+                      "final_url": url,
+                      "headers": {},
+                      "error": repr(e),
+                      "bytes_read": 0,
                   }
-              else:
-                  row["payload"] = payload
-              summary.append(row)
 
-          with open("mw_events_summary.json", "w", encoding="utf-8") as f:
-              json.dump(summary, f, ensure_ascii=False, indent=2)
+              body_path = os.path.join("probe", name + ".body")
+              with open(body_path, "wb") as f:
+                  f.write(body)
+              entry["body_path"] = body_path
+              try:
+                  entry["body_preview"] = body[:12000].decode("utf-8", "replace")
+              except Exception:
+                  entry["body_preview"] = repr(body[:1024])
+              results[name] = entry
+              print("\n===", name, "===")
+              print(json.dumps(entry, ensure_ascii=False, indent=2))
 
-          print("\n===== MW-NOWCAST EVENTS =====")
-          print(json.dumps(summary, ensure_ascii=False, indent=2))
-          print(f"\nTOTAL EVENTS: {len(results)}")
+          with open("probe/results.json", "w", encoding="utf-8") as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
           PY
 
-      - name: Upload recovered event records
+          {
+            echo "=== gitclone.com ls-remote ==="
+            git ls-remote https://gitclone.com/github.com/microsoft/MW-Nowcast.git 2>&1 || true
+            echo
+            echo "=== ghproxy tag HEAD ==="
+            curl -IL --max-time 45 'https://ghproxy.net/https://github.com/microsoft/MW-Nowcast/archive/refs/tags/v1.0.0.zip' 2>&1 || true
+          } | tee probe/mirrors.txt
+
+      - name: Upload probe results
         uses: actions/upload-artifact@v4
         with:
-          name: mw-nowcast-gharchive-events
-          path: |
-            mw_events.jsonl
-            mw_events_summary.json
+          name: mw-nowcast-recovery-probes
+          path: probe
           if-no-files-found: error
