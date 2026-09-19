@@ -1,4 +1,4 @@
-name: Deep recover MW-Nowcast
+name: Fast recover MW-Nowcast
 
 on:
   push:
@@ -12,135 +12,68 @@ permissions:
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
-      - name: Query event feeds, archives and code indexes
+      - name: Fetch author events and patch CDN
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -u
-          mkdir -p deep
+          set -eu
+          mkdir -p fast
           python3 - <<'PY'
-          import json, os, urllib.parse, urllib.request, urllib.error
+          import json, os, urllib.request, urllib.error
+          target_id=1372608490
+          target_name="microsoft/MW-Nowcast"
+          tok=os.environ.get("GH_TOKEN","")
+          hdr={"Accept":"application/vnd.github+json","User-Agent":"mw-nowcast-recovery/3.0"}
+          if tok: hdr["Authorization"]="Bearer "+tok
 
-          TARGET_ID = 1372608490
-          TARGET_NAME = "microsoft/MW-Nowcast"
-          token = os.environ.get("GH_TOKEN","")
-
-          def get(url, name, headers=None, limit=8_000_000):
-              h = {"User-Agent":"mw-nowcast-recovery/2.0", **(headers or {})}
-              req = urllib.request.Request(url, headers=h)
+          matched=[]
+          for page in range(1,4):
+              u=f"https://api.github.com/users/zuliangfang/events/public?per_page=100&page={page}"
+              req=urllib.request.Request(u,headers=hdr)
               try:
-                  with urllib.request.urlopen(req, timeout=90) as r:
-                      body = r.read(limit)
-                      meta = {"ok":True,"status":getattr(r,"status",None),"url":r.geturl(),"headers":dict(r.headers.items()),"bytes":len(body)}
-              except urllib.error.HTTPError as e:
-                  body = e.read(limit)
-                  meta = {"ok":False,"status":e.code,"url":e.geturl(),"headers":dict(e.headers.items()) if e.headers else {},"error":repr(e),"bytes":len(body)}
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      rows=json.load(r)
               except Exception as e:
-                  body=b""
-                  meta={"ok":False,"status":None,"url":url,"headers":{},"error":repr(e),"bytes":0}
-              with open(f"deep/{name}.body","wb") as f: f.write(body)
-              with open(f"deep/{name}.meta.json","w",encoding="utf-8") as f: json.dump(meta,f,ensure_ascii=False,indent=2)
-              print("\n===",name,"===")
-              print(json.dumps(meta,ensure_ascii=False,indent=2))
-              if body:
-                  print(body[:16000].decode("utf-8","replace"))
-              return body, meta
-
-          # 1. Public event history of the release author.
-          all_events=[]
-          for page in range(1,11):
-              hdr={"Accept":"application/vnd.github+json"}
-              if token: hdr["Authorization"]="Bearer "+token
-              body,meta=get(f"https://api.github.com/users/zuliangfang/events/public?per_page=100&page={page}",f"user_events_{page}",hdr)
-              if not meta.get("ok"): break
-              try: rows=json.loads(body)
-              except Exception: break
-              if not rows: break
-              all_events.extend(rows)
+                  print("EVENT ERR",page,repr(e)); break
+              print("page",page,"rows",len(rows))
+              for e in rows:
+                  repo=e.get("repo") or {}
+                  if repo.get("id")==target_id or repo.get("name")==target_name:
+                      matched.append(e)
               if len(rows)<100: break
+          print("=== MATCHED AUTHOR EVENTS ===")
+          print(json.dumps(matched,ensure_ascii=False,indent=2))
+          with open("fast/author_events.json","w",encoding="utf-8") as f:
+              json.dump(matched,f,ensure_ascii=False,indent=2)
 
-          matches=[e for e in all_events if (e.get("repo") or {}).get("id")==TARGET_ID or (e.get("repo") or {}).get("name")==TARGET_NAME]
-          with open("deep/zuliangfang_target_events.json","w",encoding="utf-8") as f:
-              json.dump(matches,f,ensure_ascii=False,indent=2)
-          print("\n=== zuliangfang_target_events ===")
-          print(json.dumps(matches,ensure_ascii=False,indent=2))
-
-          # 2. Internet Archive CDX index.
-          cdx_targets=[
-              "github.com/microsoft/MW-Nowcast/*",
-              "raw.githubusercontent.com/microsoft/MW-Nowcast/*",
-              "api.github.com/repos/microsoft/MW-Nowcast/*",
-              "github.com/microsoft/MW-Nowcast/releases/download/v1.0.0/mw_nowcast_us_9to36_128.pth",
-              "patch-diff.githubusercontent.com/raw/microsoft/MW-Nowcast/*",
-          ]
-          cdx_all={}
-          for i,target in enumerate(cdx_targets):
-              qs=urllib.parse.urlencode({
-                  "url":target,
-                  "output":"json",
-                  "filter":"statuscode:200",
-                  "fl":"timestamp,original,statuscode,mimetype,digest,length",
-                  "collapse":"urlkey",
-                  "from":"2026",
-                  "to":"2026",
-              })
-              body,meta=get("https://web.archive.org/cdx/search/cdx?"+qs,f"cdx_{i}")
-              try: cdx_all[target]=json.loads(body)
-              except Exception: cdx_all[target]=body.decode("utf-8","replace")
-          with open("deep/cdx_all.json","w",encoding="utf-8") as f:
-              json.dump(cdx_all,f,ensure_ascii=False,indent=2)
-
-          # 3. Patch CDN / GitHub patch endpoints.
-          patch_urls={
-              "patch_cdn":"https://patch-diff.githubusercontent.com/raw/microsoft/MW-Nowcast/pull/1.patch",
-              "diff_cdn":"https://patch-diff.githubusercontent.com/raw/microsoft/MW-Nowcast/pull/1.diff",
-              "github_pr_patch":"https://github.com/microsoft/MW-Nowcast/pull/1.patch",
-              "github_pr_diff":"https://github.com/microsoft/MW-Nowcast/pull/1.diff",
+          urls={
+            "patch_cdn":"https://patch-diff.githubusercontent.com/raw/microsoft/MW-Nowcast/pull/1.patch",
+            "diff_cdn":"https://patch-diff.githubusercontent.com/raw/microsoft/MW-Nowcast/pull/1.diff",
+            "pr_patch":"https://github.com/microsoft/MW-Nowcast/pull/1.patch",
+            "pr_diff":"https://github.com/microsoft/MW-Nowcast/pull/1.diff",
           }
-          for n,u in patch_urls.items(): get(u,n)
-
-          # 4. Issues.ecosyste.ms possible snapshots.
-          issue_urls={
-              "issues_repo_html":"https://issues.ecosyste.ms/hosts/GitHub/repositories/microsoft%2FMW-Nowcast/issues",
-              "issues_repo_api":"https://issues.ecosyste.ms/api/v1/hosts/GitHub/repositories/microsoft%2FMW-Nowcast/issues",
-              "issues_pr_api":"https://issues.ecosyste.ms/api/v1/hosts/GitHub/repositories/microsoft%2FMW-Nowcast/issues/1",
-          }
-          for n,u in issue_urls.items(): get(u,n)
-
-          # 5. grep.app exact traces.
-          grep_queries=[
-              "MW-Nowcast",
-              "mw_nowcast_us_9to36_128",
-              "871c21ef3a0612b4e3fa476367a4d1aea50c5004",
-              "94762e7b549d79ff01c6bdcdc93e61c03aa78e6ba61d1b55c7d58fdb8c3ef978",
-              "Microsoft Weather Nowcasting Model for six hour extreme precipitation ensemble prediction using flow matching",
-          ]
-          for i,q in enumerate(grep_queries):
-              get("https://grep.app/api/search?"+urllib.parse.urlencode({"q":q}),f"grep_{i}")
-
-          # 6. Sourcegraph public search stream.
-          sg_queries=[
-              'context:global repo:^github.com/microsoft/MW-Nowcast$',
-              'context:global "mw_nowcast_us_9to36_128"',
-              'context:global "MW-Nowcast"',
-              'context:global "871c21ef3a0612b4e3fa476367a4d1aea50c5004"',
-          ]
-          for i,q in enumerate(sg_queries):
-              qs=urllib.parse.urlencode({"q":q,"v":"V3","t":"standard","sm":"0","display":"1500"})
-              get("https://sourcegraph.com/search/stream?"+qs,f"sourcegraph_{i}",headers={"Accept":"text/event-stream"})
-
-          # 7. GitHub public user repos / search for possible renamed copies by author.
-          hdr={"Accept":"application/vnd.github+json"}
-          if token: hdr["Authorization"]="Bearer "+token
-          get("https://api.github.com/users/zuliangfang/repos?per_page=100&sort=pushed&direction=desc","zuliangfang_repos",hdr)
+          out={}
+          for name,u in urls.items():
+              req=urllib.request.Request(u,headers={"User-Agent":"mw-nowcast-recovery/3.0"})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      b=r.read(5_000_000)
+                      out[name]={"status":r.status,"url":r.geturl(),"body":b.decode("utf-8","replace")}
+              except urllib.error.HTTPError as e:
+                  b=e.read(1_000_000)
+                  out[name]={"status":e.code,"url":e.geturl(),"body":b.decode("utf-8","replace")}
+              except Exception as e:
+                  out[name]={"error":repr(e)}
+              print("===",name,"===")
+              print(json.dumps({k:v for k,v in out[name].items() if k!="body"},ensure_ascii=False))
+              if "body" in out[name]: print(out[name]["body"][:20000])
+          with open("fast/patches.json","w",encoding="utf-8") as f:
+              json.dump(out,f,ensure_ascii=False,indent=2)
           PY
-
-      - name: Upload deep recovery results
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: mw-nowcast-deep-recovery
-          path: deep
-          if-no-files-found: error
+          name: mw-nowcast-fast-recovery
+          path: fast
