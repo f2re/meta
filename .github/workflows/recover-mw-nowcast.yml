@@ -1,0 +1,140 @@
+name: Recover MW-Nowcast traces
+
+on:
+  push:
+    branches:
+      - recovery-mw-nowcast-20260919
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Scan GH Archive for MW-Nowcast
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures
+          import datetime as dt
+          import gzip
+          import io
+          import json
+          import urllib.request
+
+          TARGET = "microsoft/MW-Nowcast"
+          TARGET_BYTES = b'"name":"microsoft/MW-Nowcast"'
+          START = dt.datetime(2026, 9, 16, 6)
+          END = dt.datetime(2026, 9, 18, 6)
+
+          hours = []
+          cur = START
+          while cur <= END:
+              hours.append(cur)
+              cur += dt.timedelta(hours=1)
+
+          def scan_hour(t):
+              url = f"https://data.gharchive.org/{t:%Y-%m-%d}-{t.hour}.json.gz"
+              found = []
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent": "mw-nowcast-recovery/1.0"})
+                  with urllib.request.urlopen(req, timeout=180) as resp:
+                      with gzip.GzipFile(fileobj=resp) as gz:
+                          for raw in gz:
+                              if TARGET_BYTES not in raw:
+                                  continue
+                              try:
+                                  event = json.loads(raw)
+                              except Exception:
+                                  continue
+                              if event.get("repo", {}).get("name") == TARGET:
+                                  found.append(event)
+                  return t, url, found, None
+              except Exception as exc:
+                  return t, url, [], repr(exc)
+
+          results = []
+          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+              futures = [pool.submit(scan_hour, h) for h in hours]
+              for fut in concurrent.futures.as_completed(futures):
+                  t, url, found, err = fut.result()
+                  print(f"{t:%Y-%m-%d %H}: {len(found)} event(s)" + (f" ERROR={err}" if err else ""))
+                  results.extend(found)
+
+          results.sort(key=lambda e: e.get("created_at", ""))
+          with open("mw_events.jsonl", "w", encoding="utf-8") as f:
+              for event in results:
+                  f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+          summary = []
+          for event in results:
+              payload = event.get("payload") or {}
+              row = {
+                  "id": event.get("id"),
+                  "type": event.get("type"),
+                  "created_at": event.get("created_at"),
+                  "actor": (event.get("actor") or {}).get("login"),
+                  "repo": event.get("repo"),
+              }
+              if event.get("type") == "PushEvent":
+                  row["push"] = {
+                      "ref": payload.get("ref"),
+                      "before": payload.get("before"),
+                      "head": payload.get("head"),
+                      "size": payload.get("size"),
+                      "distinct_size": payload.get("distinct_size"),
+                      "commits": payload.get("commits"),
+                  }
+              elif event.get("type") == "ReleaseEvent":
+                  release = payload.get("release") or {}
+                  row["action"] = payload.get("action")
+                  row["release"] = {
+                      "id": release.get("id"),
+                      "node_id": release.get("node_id"),
+                      "tag_name": release.get("tag_name"),
+                      "target_commitish": release.get("target_commitish"),
+                      "name": release.get("name"),
+                      "draft": release.get("draft"),
+                      "prerelease": release.get("prerelease"),
+                      "created_at": release.get("created_at"),
+                      "published_at": release.get("published_at"),
+                      "zipball_url": release.get("zipball_url"),
+                      "tarball_url": release.get("tarball_url"),
+                      "assets": [
+                          {
+                              "id": a.get("id"),
+                              "node_id": a.get("node_id"),
+                              "name": a.get("name"),
+                              "size": a.get("size"),
+                              "digest": a.get("digest"),
+                              "url": a.get("url"),
+                              "browser_download_url": a.get("browser_download_url"),
+                              "created_at": a.get("created_at"),
+                              "updated_at": a.get("updated_at"),
+                          }
+                          for a in (release.get("assets") or [])
+                      ],
+                  }
+              else:
+                  row["payload"] = payload
+              summary.append(row)
+
+          with open("mw_events_summary.json", "w", encoding="utf-8") as f:
+              json.dump(summary, f, ensure_ascii=False, indent=2)
+
+          print("\n===== MW-NOWCAST EVENTS =====")
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          print(f"\nTOTAL EVENTS: {len(results)}")
+          PY
+
+      - name: Upload recovered event records
+        uses: actions/upload-artifact@v4
+        with:
+          name: mw-nowcast-gharchive-events
+          path: |
+            mw_events.jsonl
+            mw_events_summary.json
+          if-no-files-found: error
